@@ -1,15 +1,28 @@
+"""
+Backend tipis (Vercel Python Function) untuk Apify actor
+web.harvester/youtube-downloader (YouTube -> MP3).
+
+Alur (supaya tidak kena timeout function Vercel):
+  POST /api/youtube_audio            {"url": "..."}  -> mulai run, balas {"runId": "..."}
+  GET  /api/youtube_audio?run=<id>                   -> status run; jika selesai balas
+                                                        {"status":"SUCCEEDED","fileUrl","title","duration"}
+  GET  /api/youtube_audio?file=<fileUrl>             -> proxy file MP3 (cadangan, maks ~4.4 MB)
+  GET  /api/youtube_audio                            -> cek status endpoint
+
+Environment variable di Vercel:
+  APIFY_TOKEN          (wajib)  token API Apify
+  APIFY_PROXY_GROUPS   (opsional) mis. "RESIDENTIAL" jika run biasa sering gagal
+"""
 import json
 import os
 import re
-import tempfile
-from pathlib import Path
 from http.server import BaseHTTPRequestHandler
-from urllib.parse import urlparse
+from urllib.error import HTTPError, URLError
+from urllib.parse import parse_qs, urlparse
+from urllib.request import Request, urlopen
 
-from yt_dlp import YoutubeDL
-
-MAX_AUDIO_BYTES = 4 * 1024 * 1024  # Keep below Vercel's 4.5 MB response limit.
-MAX_DURATION_SECONDS = 5 * 60
+ACTOR = "web.harvester~youtube-downloader"
+APIFY = "https://api.apify.com/v2"
 ALLOWED_HOSTS = {
     "youtube.com",
     "www.youtube.com",
@@ -17,36 +30,169 @@ ALLOWED_HOSTS = {
     "music.youtube.com",
     "youtu.be",
 }
+RUN_ID_RE = re.compile(r"^[A-Za-z0-9]{8,40}$")
+MAX_PROXY_BYTES = 4_400_000  # batas aman respons Vercel (4.5 MB)
+FAILED_STATES = {"FAILED", "ABORTING", "ABORTED", "TIMING-OUT", "TIMED-OUT"}
 
 
-def safe_filename(value: str) -> str:
-    value = re.sub(r"[^A-Za-z0-9._ -]", "", value or "")
-    value = value.strip(" .-_")[:80]
-    return value or "youtube-audio"
+class ApifyError(Exception):
+    def __init__(self, message: str, status: int = 502):
+        super().__init__(message)
+        self.status = status
+
+
+def token() -> str:
+    t = os.environ.get("APIFY_TOKEN", "").strip()
+    if not t:
+        raise ApifyError("APIFY_TOKEN belum diatur di Environment Variables Vercel.", 500)
+    return t
+
+
+def apify_json(method: str, path: str, body: dict | None = None, timeout: int = 25):
+    data = json.dumps(body).encode("utf-8") if body is not None else None
+    req = Request(
+        APIFY + path,
+        data=data,
+        method=method,
+        headers={
+            "Authorization": f"Bearer {token()}",
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        with urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except HTTPError as e:
+        if e.code == 401:
+            raise ApifyError("Token Apify tidak valid.", 502)
+        if e.code in (402, 403):
+            raise ApifyError("Saldo/limit Apify tidak cukup atau actor tidak bisa dipakai akun ini.", 502)
+        if e.code == 404:
+            raise ApifyError("Data Apify tidak ditemukan (run kedaluwarsa atau ID salah).", 404)
+        if e.code == 429:
+            raise ApifyError("Terlalu banyak permintaan ke Apify. Coba lagi sebentar.", 429)
+        print("apify http error:", e.code)
+        raise ApifyError("Apify mengembalikan error. Coba lagi.", 502)
+    except (URLError, TimeoutError):
+        raise ApifyError("Tidak bisa menghubungi Apify. Coba lagi.", 504)
 
 
 class handler(BaseHTTPRequestHandler):
-    def _json(self, status: int, payload: dict):
-        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    # ---------- helpers ----------
+    def _send(self, status: int, body: bytes, content_type: str, extra: dict | None = None):
         self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        for k, v in (extra or {}).items():
+            self.send_header(k, v)
         self.end_headers()
         self.wfile.write(body)
 
+    def _json(self, status: int, payload: dict):
+        self._send(status, json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                   "application/json; charset=utf-8")
+
+    def _same_origin(self) -> bool:
+        """Cegah situs lain memakai endpoint (dan kuota Apify) kamu."""
+        site = self.headers.get("Sec-Fetch-Site")
+        if site:
+            return site == "same-origin"
+        host = self.headers.get("Host", "")
+        for name in ("Origin", "Referer"):
+            value = self.headers.get(name)
+            if value:
+                return urlparse(value).netloc == host
+        return False
+
+    # ---------- GET ----------
     def do_GET(self):
+        try:
+            query = parse_qs(urlparse(self.path).query)
+
+            if not query:
+                return self._json(200, {"ok": True, "service": "youtube_audio", "provider": "apify"})
+
+            if not self._same_origin():
+                return self._json(403, {"error": "Akses ditolak."})
+
+            if "run" in query:
+                return self._run_status(query["run"][0])
+            if "file" in query:
+                return self._proxy_file(query["file"][0])
+            return self._json(400, {"error": "Request tidak valid."})
+        except ApifyError as e:
+            self._json(e.status, {"error": str(e)})
+        except Exception as e:
+            print("unexpected error:", repr(e))
+            self._json(500, {"error": "Terjadi kesalahan di server."})
+
+    def _run_status(self, run_id: str):
+        if not RUN_ID_RE.match(run_id):
+            return self._json(400, {"error": "Run ID tidak valid."})
+
+        run = apify_json("GET", f"/actor-runs/{run_id}")["data"]
+        status = run.get("status", "UNKNOWN")
+
+        if status in FAILED_STATES:
+            return self._json(502, {
+                "status": status,
+                "error": "Apify gagal memproses video (mungkin dibatasi, privat, atau tidak tersedia).",
+            })
+        if status != "SUCCEEDED":
+            return self._json(200, {"status": status})
+
+        dataset_id = run.get("defaultDatasetId")
+        items = apify_json("GET", f"/datasets/{dataset_id}/items?clean=true&limit=1") if dataset_id else []
+        item = items[0] if isinstance(items, list) and items else {}
+        file_url = item.get("fileUrl")
+        if not file_url:
+            return self._json(502, {
+                "status": status,
+                "error": "Apify selesai tetapi tidak mengembalikan file MP3 untuk video ini.",
+            })
+
+        info = item.get("information") or {}
+        try:
+            duration = int(info.get("lengthSeconds") or 0)
+        except (TypeError, ValueError):
+            duration = 0
         self._json(200, {
-            "ok": True,
-            "service": "youtube_audio",
-            "limits": {
-                "max_audio_mb": 4,
-                "max_duration_seconds": MAX_DURATION_SECONDS
-            }
+            "status": "SUCCEEDED",
+            "fileUrl": file_url,
+            "title": info.get("title") or "youtube-audio",
+            "duration": duration,
         })
 
+    def _proxy_file(self, file_url: str):
+        parsed = urlparse(file_url)
+        if (parsed.scheme != "https" or parsed.hostname != "api.apify.com"
+                or not parsed.path.startswith("/v2/key-value-stores/")):
+            return self._json(400, {"error": "URL file tidak valid."})
+
+        req = Request(file_url, headers={"Authorization": f"Bearer {token()}"})
+        try:
+            with urlopen(req, timeout=40) as resp:
+                content_type = resp.headers.get("Content-Type", "audio/mpeg")
+                data = resp.read(MAX_PROXY_BYTES + 1)
+        except (HTTPError, URLError, TimeoutError):
+            return self._json(502, {"error": "Gagal mengunduh file MP3 dari Apify."})
+
+        if len(data) > MAX_PROXY_BYTES:
+            return self._json(413, {
+                "error": "File MP3 lebih dari 4.4 MB sehingga tidak bisa lewat Vercel. "
+                         "Buka link langsung dari Apify atau gunakan video yang lebih pendek."
+            })
+        if not content_type.startswith("audio/"):
+            content_type = "audio/mpeg"
+        self._send(200, data, content_type)
+
+    # ---------- POST ----------
     def do_POST(self):
         try:
+            if not self._same_origin():
+                return self._json(403, {"error": "Akses ditolak."})
+
             length = int(self.headers.get("Content-Length", "0"))
             if length <= 0 or length > 8192:
                 return self._json(400, {"error": "Request tidak valid."})
@@ -54,116 +200,29 @@ class handler(BaseHTTPRequestHandler):
             payload = json.loads(self.rfile.read(length))
             url = (payload.get("url") or "").strip()
             parsed = urlparse(url)
-
             if parsed.scheme not in ("http", "https") or parsed.hostname not in ALLOWED_HOSTS:
                 return self._json(400, {"error": "Masukkan URL YouTube yang valid."})
 
-            # No playlists, no external post-processing binaries.
-            with tempfile.TemporaryDirectory(dir="/tmp", prefix="youtube-audio-") as temp_dir:
-                output_template = str(Path(temp_dir) / "source.%(ext)s")
-                options = {
-                    # Prefer a compact audio-only stream so short videos fit Vercel's
-                    # 4.5 MB function response limit. No login/cookie circumvention.
-                    "format": "worstaudio[ext=m4a]/worstaudio/bestaudio[ext=m4a]/bestaudio",
-                    "outtmpl": output_template,
-                    "noplaylist": True,
-                    "quiet": True,
-                    "no_warnings": True,
-                    "restrictfilenames": True,
-                     "socket_timeout": 25,
-                    "retries": 2,
-                    "fragment_retries": 2,
-                    "extractor_retries": 2,
-                    "http_headers": {
-                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/130.0.0.0 Safari/537.36",
-                        "Accept-Language": "en-US,en;q=0.9,id;q=0.8",
-                    },
-                    "max_filesize": MAX_AUDIO_BYTES,
-                    "overwrites": True,
-                    "cachedir": False,  # filesystem Vercel read-only kecuali /tmp
-                }
+            proxy = {"useApifyProxy": True}
+            groups = [g.strip() for g in os.environ.get("APIFY_PROXY_GROUPS", "").split(",") if g.strip()]
+            if groups:
+                proxy["apifyProxyGroups"] = groups
 
-                with YoutubeDL(options) as ydl:
-                    info = ydl.extract_info(url, download=False)
-
-                    duration = info.get("duration")
-                    if duration and duration > MAX_DURATION_SECONDS:
-                        return self._json(
-                            413,
-                            {"error": "Video terlalu panjang. Maksimal 5 menit."}
-                        )
-
-                    info = ydl.extract_info(url, download=True)
-                    requested = info.get("requested_downloads") or []
-                    downloaded_path = None
-                    if requested:
-                        downloaded_path = requested[0].get("filepath")
-
-                    if not downloaded_path or not os.path.isfile(downloaded_path):
-                        # Fallback for yt-dlp versions that do not populate filepath.
-                        candidates = list(Path(temp_dir).glob("source.*"))
-                        candidates = [p for p in candidates if p.is_file()]
-                        if candidates:
-                            downloaded_path = str(candidates[0])
-
-                    if not downloaded_path or not os.path.isfile(downloaded_path):
-                        return self._json(
-                            413,
-                            {"error": "Audio gagal diunduh (kemungkinan melebihi 4 MB atau dibatasi YouTube)."}
-                        )
-
-                    size = os.path.getsize(downloaded_path)
-                    if size > MAX_AUDIO_BYTES:
-                        return self._json(
-                            413,
-                            {"error": "Ukuran audio melebihi batas 4 MB. Coba video yang lebih pendek."}
-                        )
-
-                    extension = Path(downloaded_path).suffix.lower()
-                    mime_types = {
-                        ".m4a": "audio/mp4",
-                        ".webm": "audio/webm",
-                        ".opus": "audio/ogg",
-                        ".ogg": "audio/ogg",
-                        ".mp3": "audio/mpeg",
-                    }
-                    content_type = mime_types.get(extension, "application/octet-stream")
-                    filename = safe_filename(info.get("title")) + (extension or ".m4a")
-
-                    with open(downloaded_path, "rb") as audio_file:
-                        audio_data = audio_file.read()
-
-            self.send_response(200)
-            self.send_header("Content-Type", content_type)
-            self.send_header("Content-Length", str(len(audio_data)))
-            self.send_header("Content-Disposition", f'inline; filename="{filename}"')
-            self.send_header("X-Audio-Filename", filename)
-            self.send_header("Cache-Control", "no-store")
-            self.end_headers()
-            self.wfile.write(audio_data)
-
-        except Exception as exc:
-            # Do not expose stack traces or server internals to visitors.
-            message = str(exc)
-            if "Private video" in message:
-                message = "Video bersifat privat dan tidak dapat diakses."
-            elif "Sign in" in message or "login" in message.lower():
-                message = "Video membutuhkan login atau memiliki pembatasan akses."
-            elif "Unsupported URL" in message:
-                message = "URL YouTube tidak didukung."
-            elif "HTTP Error 403" in message or "HTTP Error 429" in message:
-                message = "YouTube menolak koneksi dari server Vercel (403/429). Coba lagi nanti atau gunakan file audio lokal."
-            elif "Video unavailable" in message or "Private video" in message:
-                message = "Video tidak tersedia untuk diakses secara publik."
-            elif "File is larger than" in message or "filesize" in message.lower():
-                message = "Ukuran audio melebihi batas 4 MB yang dapat dikirim oleh Vercel."
-            else:
-                # Log detail server-side for deployment diagnostics, but do not
-                # expose internal paths or stack traces to visitors.
-                print("yt-dlp error:", repr(exc))
-                message = "YouTube gagal menyediakan stream untuk server. Bisa karena pembatasan akses, video tidak tersedia, atau perubahan YouTube/yt-dlp."
-            self._json(422, {"error": message})
+            run = apify_json("POST", f"/actors/{ACTOR}/runs", {
+                "youtubeUrls": [{"url": url}],
+                "includeInfo": True,
+                "maxRequestRetries": 25,
+                "proxyConfiguration": proxy,
+            })["data"]
+            self._json(200, {"runId": run["id"], "status": run.get("status", "READY")})
+        except ApifyError as e:
+            self._json(e.status, {"error": str(e)})
+        except (ValueError, KeyError):
+            self._json(400, {"error": "Request tidak valid."})
+        except Exception as e:
+            print("unexpected error:", repr(e))
+            self._json(500, {"error": "Terjadi kesalahan di server."})
 
     def log_message(self, format, *args):
-        # Avoid logging full YouTube URLs or request payloads.
+        # Jangan log URL YouTube atau token.
         return

@@ -44,7 +44,7 @@
       <input type="url" id="youtubeUrl" placeholder="https://www.youtube.com/watch?v=...">
       <button id="loadYoutube">Muat YouTube</button>
     </div>
-    <div class="info">YouTube diproses oleh backend. Batas respons Vercel: audio maksimal 4 MB dan durasi 5 menit. Gunakan hanya konten yang boleh kamu unduh.</div>
+    <div class="info">YouTube &rarr; MP3 diproses lewat Apify (biasanya 10&ndash;60 detik), lalu dikonversi di browser ke format pilihanmu. Gunakan hanya konten yang boleh kamu unduh.</div>
     <div id="sourceDownload" style="display:none;margin-top:10px">
       <a id="sourceDl" download="youtube-audio.m4a"><button type="button">Unduh audio sumber</button></a>
     </div>
@@ -125,7 +125,17 @@ $('loadUrl').onclick = async ()=>{
   }catch(e){ $('status').textContent='Gagal memuat link (bukan file audio langsung, atau diblokir CORS).'; }
 };
 
-// YouTube: audio diambil oleh Vercel Python Function menggunakan yt-dlp (tanpa FFmpeg).
+// YouTube -> MP3 lewat Apify (backend memulai run, browser memantau status).
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const API = '/api/youtube_audio';
+
+async function apiJson(r) {
+  let d = {};
+  try { d = await r.json(); } catch {}
+  if (!r.ok) throw new Error(d.error || `Backend error (HTTP ${r.status}).`);
+  return d;
+}
+
 $('loadYoutube').onclick = async () => {
   const u = $('youtubeUrl').value.trim();
   if (!u) return;
@@ -136,31 +146,58 @@ $('loadYoutube').onclick = async () => {
     return;
   }
   $('loadYoutube').disabled = true;
-  $('status').textContent = 'Mengambil audio dari YouTube melalui backend...';
+  $('go').disabled = true;
   try {
-    const r = await fetch('/api/youtube_audio', {
+    // 1. Mulai run Apify
+    $('status').textContent = 'Memulai konversi YouTube ke MP3...';
+    const start = await apiJson(await fetch(API, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({url: u})
-    });
-    if (!r.ok) {
-      let msg = 'Backend gagal mengambil audio.';
-      try { const data = await r.json(); if (data.error) msg = data.error; } catch {}
-      throw new Error(msg);
+    }));
+
+    // 2. Pantau sampai selesai (maks 4 menit)
+    const t0 = Date.now();
+    let result = null;
+    while (!result) {
+      await sleep(3000);
+      const secs = Math.round((Date.now() - t0) / 1000);
+      if (secs > 240) throw new Error('Waktu tunggu habis. Coba lagi.');
+      const d = await apiJson(await fetch(`${API}?run=${encodeURIComponent(start.runId)}`, {cache: 'no-store'}));
+      if (d.status === 'SUCCEEDED') result = d;
+      else $('status').textContent = `Apify sedang memproses (${d.status.toLowerCase()}, ${secs} dtk)...`;
     }
-    const name = r.headers.get('X-Audio-Filename') || 'youtube-audio.m4a';
-    const audioBlob = await r.blob();
+
+    // 3. Unduh MP3 (langsung dari Apify; jika diblokir CORS, lewat backend)
+    $('status').textContent = 'Mengunduh file MP3...';
+    let audioBlob;
+    try {
+      const f = await fetch(result.fileUrl);
+      if (!f.ok) throw new Error('direct failed');
+      audioBlob = await f.blob();
+    } catch {
+      const f = await fetch(`${API}?file=${encodeURIComponent(result.fileUrl)}`, {cache: 'no-store'});
+      if (!f.ok) await apiJson(f);
+      audioBlob = await f.blob();
+    }
+
+    const safe = (result.title || 'youtube-audio').replace(/[^\w .()-]+/g, '').trim().slice(0, 80) || 'youtube-audio';
+    const name = safe + '.mp3';
     const sourceUrl = URL.createObjectURL(audioBlob);
     $('sourceDl').href = sourceUrl;
     $('sourceDl').download = name;
     $('sourceDownload').style.display = 'block';
+
     await load(await audioBlob.arrayBuffer(), name);
-    $('fileInfo').textContent = `Sumber YouTube • ${name} • ${(audioBlob.size/1048576).toFixed(2)} MB`;
-    $('status').textContent = 'Audio YouTube berhasil dimuat. Kamu juga bisa mengunduh file sumber.';
+    if (buf) {
+      $('fileInfo').textContent = `Sumber YouTube \u2022 ${name} \u2022 ${(audioBlob.size/1048576).toFixed(2)} MB`;
+      $('status').textContent = 'MP3 dari YouTube siap. Pilih format output lalu klik "Percepat & buat file".';
+    }
   } catch (e) {
     $('status').textContent = `Gagal memuat YouTube: ${e.message}`;
   } finally {
     $('loadYoutube').disabled = false;
+    $('go').disabled = !buf;
   }
 };
 

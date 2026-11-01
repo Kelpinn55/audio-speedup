@@ -1,100 +1,38 @@
 # Audio Speed-Up
 
-Web app untuk mempercepat audio dengan perubahan pitch (nada ikut naik), lalu menguji pemulihan kecepatan menggunakan nilai restore.
+Web app untuk mempercepat audio (nada ikut naik), lalu menguji pemulihan kecepatan dengan nilai restore.
 
 ## Fitur
 
-- Upload audio lokal.
-- Memuat direct link audio (bergantung pada CORS server sumber).
-- Memuat audio dari URL YouTube melalui Vercel Python Function + `yt-dlp`.
+- Upload audio lokal atau direct link audio (butuh CORS dari server sumber).
+- **YouTube → MP3** lewat Apify actor [`web.harvester/youtube-downloader`](https://apify.com/web.harvester/youtube-downloader).
 - Restore speed preset `0.43`, `0.44`, atau custom.
-- Ekspor MP3 atau OGG melalui WebAssembly di browser.
-- Preview, tes restore, dan unduh hasil.
+- Ekspor **MP3 (320 kbps)** atau **OGG (Vorbis q10)** lewat WebAssembly di browser.
+- Preview, tes restore, unduh hasil, dan unduh MP3 sumber dari YouTube.
 
-## Batasan endpoint YouTube di Vercel
+## Alur YouTube
 
-Endpoint ini sengaja membatasi:
-- Maksimal 5 menit per video.
-- Maksimal 4 MB untuk file audio yang diunduh.
-- Satu video saja (playlist tidak diproses).
+1. Browser mengirim URL ke `POST /api/youtube_audio`; backend memulai run Apify.
+2. Browser memantau `GET /api/youtube_audio?run=ID` sampai selesai (tidak kena timeout function).
+3. File MP3 diunduh langsung dari Apify (jika diblokir CORS, lewat `GET /api/youtube_audio?file=...`, maks ~4.4 MB).
+4. MP3 diperlambat/dipercepat di browser dan di-encode ke MP3 atau OGG sesuai pilihan.
 
-Vercel Functions membatasi response body hingga 4.5 MB. Batas 4 MB di aplikasi menjaga response berada di bawah batas platform. Video yang lebih panjang/berukuran lebih besar akan ditolak. Untuk audio panjang, gunakan worker/backend terpisah dan object storage.
+## Setup Apify
 
-`yt-dlp` tidak menjamin semua video dapat diambil. YouTube dapat mengubah mekanisme akses atau menolak IP server cloud. Video privat, video yang membutuhkan login, dan konten yang dibatasi tidak didukung.
+1. Buat akun di https://apify.com, lalu ambil API token di **Settings → API & Integrations**.
+2. Di Vercel: **Project → Settings → Environment Variables**, tambahkan:
+   - `APIFY_TOKEN` = token Apify kamu (wajib).
+   - `APIFY_PROXY_GROUPS` = `RESIDENTIAL` (opsional, hanya jika run biasa sering gagal; proxy residensial lebih mahal).
+3. **Redeploy** setelah menambah environment variable.
+
+Biaya actor sekitar **$28 per 1.000 file MP3** (cek halaman pricing Apify untuk angka terbaru), belum termasuk biaya proxy.
+**Jangan** menaruh token di `index.html` atau repository.
 
 ## Deploy ke GitHub dan Vercel
 
-### 1. Upload ke GitHub
+Upload seluruh isi folder ini ke root repository (termasuk file berawalan titik: `.python-version`, `.gitignore`), lalu import ke Vercel dengan Framework Preset **Other**, Build Command kosong, Output Directory kosong.
 
-1. Buat repository baru di GitHub.
-2. Upload seluruh isi folder ini ke root repository (bukan folder ZIP di dalam repository).
-3. Pastikan `public/index.html`, `vercel.json`, `pyproject.toml`, `requirements.txt`, `.python-version`, dan folder `api/` berada di root.
-
-Atau melalui Git:
-
-```bash
-git init
-git add .
-git commit -m "Prepare Audio Speed-Up for Vercel"
-git branch -M main
-git remote add origin https://github.com/USERNAME/REPOSITORY.git
-git push -u origin main
-```
-
-### 2. Deploy di Vercel
-
-1. Login ke https://vercel.com
-2. Pilih **Add New → Project**.
-3. Import repository GitHub.
-4. Framework Preset: **Other**.
-5. Root Directory: `./`.
-6. Build Command: kosongkan / override off.
-7. Output Directory: kosongkan.
-8. Klik **Deploy**.
-
-Vercel akan menyajikan `public/index.html` sebagai static page dan mendeteksi `api/youtube_audio.py` sebagai Python Function.
-
-### 3. Tes endpoint
-
-Setelah deploy, buka:
-
-```text
-https://NAMA-PROJECT.vercel.app/api/youtube_audio
-```
-
-Endpoint GET harus menampilkan JSON status dan batas penggunaan. Kembali ke halaman utama untuk menguji URL YouTube.
-
-## Pengembangan lokal
-
-Python 3.12+:
-
-```bash
-python -m venv .venv
-```
-
-Aktifkan virtual environment, lalu:
-
-```bash
-pip install -r requirements.txt
-```
-
-Untuk menjalankan frontend dan API secara lokal dengan routing Vercel, gunakan Vercel CLI:
-
-```bash
-npm install -g vercel
-vercel dev
-```
-
-Buka URL lokal yang ditampilkan Vercel CLI.
-
-## Privasi dan hak cipta
-
-- Jangan gunakan untuk mengunduh konten yang tidak kamu miliki atau tidak memiliki izin untuk mengunduhnya.
-- Jangan mengunggah cookie, token, atau kredensial YouTube ke repository.
-- Endpoint publik dapat disalahgunakan dan konsumsi Function dapat menimbulkan biaya. Tambahkan autentikasi, rate limiting, dan pembatasan penggunaan sebelum penggunaan publik berskala besar.
-- Jangan mencoba melewati login, paywall, DRM, atau pembatasan akses.
-
-## Struktur
+Struktur:
 
 ```text
 .
@@ -102,9 +40,27 @@ Buka URL lokal yang ditampilkan Vercel CLI.
 │   └── youtube_audio.py
 ├── public/
 │   └── index.html
-├── requirements.txt
+├── pyproject.toml
 ├── vercel.json
 ├── .python-version
 ├── .gitignore
 └── README.md
 ```
+
+Tidak ada `requirements.txt` karena backend hanya memakai library standar Python.
+
+Tes endpoint setelah deploy: buka `https://NAMA-PROJECT.vercel.app/api/youtube_audio` → harus menampilkan `{"ok": true, ...}`.
+
+## Pengembangan lokal
+
+```bash
+npm install -g vercel
+vercel dev
+```
+
+Atur `APIFY_TOKEN` lewat `vercel env pull` atau file `.env.local` (jangan di-commit).
+
+## Keamanan dan hak cipta
+
+- Endpoint hanya menerima request dari origin yang sama, tetapi tetap bisa menghabiskan kuota Apify. Aktifkan Vercel Firewall/rate limiting jika situs dibuka publik.
+- Gunakan hanya untuk konten yang kamu miliki atau boleh kamu unduh.
