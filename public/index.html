@@ -308,20 +308,31 @@ $('go').onclick = async () => {
   const todo = rows.filter(r => r.state === 'wait' || r.state === 'error');
   if (!todo.length) return;
   setBusy(true);
-  if ($('autoUp').checked && /^\d+$/.test($('rbId').value.trim())) {
+  let canUp = $('autoUp').checked;
+  if (canUp && /^\d+$/.test($('rbId').value.trim())) {
     $('status').textContent = 'Memvalidasi Creator ID...';
-    await validateCreator();
+    canUp = (await validateCreator()) !== false;
   }
-  let i = 0;
-  for (const r of todo) {
-    i++; $('status').textContent = `Memproses ${i}/${todo.length}...`;
-    await processRow(r);
-    if ($('autoUp').checked && r.blob && r.upBlob) {
-      if (!credsOk()) { r.msg += ' • ' + credsProblem() + ' (untuk auto-upload)'; paintRow(r); }
-      else await uploadRow(r);
+  // Pemrosesan audio berjalan berurutan; upload + tunggu moderasi berjalan di latar belakang
+  // secara paralel, jadi tidak perlu menunggu satu lagu Approved sebelum lagu berikutnya.
+  const ups = [], pending = [];
+  let procInfo = 'Memproses...';
+  const timer = setInterval(() => { $('status').textContent = procInfo + bulkInfo(ups); }, 700);
+  try {
+    let i = 0;
+    for (const r of todo) {
+      i++; procInfo = `Memproses ${i}/${todo.length}`;
+      await processRow(r);
+      if ($('autoUp').checked && r.blob && r.upBlob) {
+        if (!canUp) { r.msg += ' • upload dilewati: Creator ID tidak valid'; paintRow(r); }
+        else if (!credsOk()) { r.msg += ' • ' + credsProblem() + ' (untuk auto-upload)'; paintRow(r); }
+        else { ups.push(r); pending.push(uploadAndModerate(r)); }
+      }
     }
-  }
-  $('status').textContent = `Selesai memproses ${todo.length} file.`;
+    procInfo = `Selesai memproses ${todo.length} file`;
+    await Promise.all(pending);
+  } finally { clearInterval(timer); }
+  $('status').textContent = `Selesai memproses ${todo.length} file.` + bulkInfo(ups);
   setBusy(false);
 };
 
@@ -411,12 +422,37 @@ async function checkModeration(r) {
   paintRow(r); syncUI(); updateLua();
 }
 
-async function uploadRow(r) {
+// Pembatas konkurensi: maks N tugas berjalan bersamaan (hindari rate limit Roblox / batas Vercel).
+function makeLimiter(n) {
+  let active = 0; const q = [];
+  const next = () => {
+    if (active >= n || !q.length) return;
+    active++;
+    const { fn, res, rej } = q.shift();
+    fn().then(res, rej).finally(() => { active--; next(); });
+  };
+  return fn => new Promise((res, rej) => { q.push({ fn, res, rej }); next(); });
+}
+const uploadLimit = makeLimiter(3);   // maks 3 upload ke Roblox berbarengan
+const checkLimit = makeLimiter(4);    // maks 4 cek moderasi berbarengan
+
+function bulkInfo(list) {
+  if (!list.length) return '';
+  const sent = list.filter(r => r.assetId || r.mod === 'rejected').length;
+  const appr = list.filter(r => r.mod === 'approved').length;
+  const rej = list.filter(r => r.mod === 'rejected').length;
+  return ` • Upload ${sent}/${list.length} terkirim, ${appr} Approved` + (rej ? `, ${rej} ditolak` : '');
+}
+
+// Fase 1: kirim file ke Roblox sampai Asset ID keluar. Mengembalikan true jika berhasil.
+async function uploadPhase(r, opts = {}) {
   const problem = credsProblem();
-  if (problem) { r.err = true; r.msg = problem; paintRow(r); return; }
-  if (!r.upBlob) { r.err = true; r.msg = 'File terlalu besar untuk diupload lewat Vercel (>4.3 MB).'; paintRow(r); return; }
-  const v = await validateCreator();
-  if (v === false) { r.err = true; r.msg = 'Upload dibatalkan: Creator ID tidak valid (lihat info di bagian Upload).'; paintRow(r); return; }
+  if (problem) { r.err = true; r.msg = problem; paintRow(r); return false; }
+  if (!r.upBlob) { r.err = true; r.msg = 'File terlalu besar untuk diupload lewat Vercel (>4.3 MB).'; paintRow(r); return false; }
+  if (!opts.skipValidate) {
+    const v = await validateCreator();
+    if (v === false) { r.err = true; r.msg = 'Upload dibatalkan: Creator ID tidak valid (lihat info di bagian Upload).'; paintRow(r); return false; }
+  }
   const key = getKey();
   r.mod = null; r.err = false; r.msg = 'Mengunggah ke Roblox...'; paintRow(r);
   try {
@@ -437,21 +473,43 @@ async function uploadRow(r) {
       const s = await apiJson(await fetch(`${API}?operation=${encodeURIComponent(first.operationId)}`, { headers: { 'x-roblox-key': key }, cache: 'no-store' }));
       if (s.done) { assetId = s.assetId; mod = s.moderation || null; }
     }
-    r.assetId = assetId;
-    // Tunggu hasil moderasi sebentar (maks ~40 dtk); kalau masih review, user bisa cek lagi nanti.
-    const t1 = Date.now();
-    while (mod !== 'approved' && mod !== 'rejected' && Date.now() - t1 < 40000) {
-      r.mod = mod || 'reviewing'; r.msg = `Terupload (ID ${assetId}), menunggu moderasi Roblox (${Math.round((Date.now() - t1) / 1000)} dtk)...`; paintRow(r);
-      await sleep(4000);
-      try {
-        const d = await apiJson(await fetch(`${API}?asset=${encodeURIComponent(assetId)}`, { headers: { 'x-roblox-key': key }, cache: 'no-store' }));
-        mod = d.moderation;
-      } catch { break; }
-    }
-    applyModeration(r, mod);
+    r.assetId = assetId; r.mod = mod || 'reviewing';
+    r.msg = `Terupload (ID ${assetId}), menunggu moderasi Roblox...`; paintRow(r);
+    return true;
   } catch (e) {
-    r.err = true; r.msg = 'Upload gagal: ' + e.message;
+    r.err = true; r.msg = 'Upload gagal: ' + e.message; paintRow(r); syncUI();
+    return false;
   }
+}
+
+// Fase 2: pantau moderasi (jalan paralel untuk banyak file; tidak menahan antrian upload).
+async function moderationPhase(r, maxMs = 90000) {
+  const key = getKey();
+  let mod = r.mod, fails = 0, unk = 0;
+  const t1 = Date.now();
+  while (mod !== 'approved' && mod !== 'rejected' && Date.now() - t1 < maxMs) {
+    r.mod = mod || 'reviewing';
+    r.msg = `Terupload (ID ${r.assetId}), menunggu moderasi Roblox (${Math.round((Date.now() - t1) / 1000)} dtk)...`; paintRow(r);
+    await sleep(5000);
+    try {
+      const d = await apiJson(await fetch(`${API}?asset=${encodeURIComponent(r.assetId)}`, { headers: { 'x-roblox-key': key }, cache: 'no-store' }));
+      mod = d.moderation; fails = 0;
+      if (mod === 'unknown' && ++unk >= 3) break;   // Roblox tidak memberi status; jangan menunggu sia-sia
+    } catch { if (++fails >= 3) break; }
+  }
+  applyModeration(r, mod);
+  paintRow(r); syncUI(); updateLua();
+}
+
+async function uploadAndModerate(r, opts = {}) {
+  const ok = await uploadLimit(() => uploadPhase(r, { skipValidate: true, ...opts }));
+  if (ok) await moderationPhase(r);
+  else { paintRow(r); syncUI(); }
+}
+
+// Upload satu file (tombol per file): fase upload lalu fase moderasi.
+async function uploadRow(r) {
+  if (await uploadPhase(r)) await moderationPhase(r);
   paintRow(r); syncUI(); updateLua();
 }
 
@@ -461,10 +519,15 @@ $('uploadAll').onclick = async () => {
   setBusy(true);
   const v = await validateCreator();
   if (v === false) { $('status').textContent = 'Upload dibatalkan: Creator ID tidak valid.'; setBusy(false); return; }
-  let i = 0;
-  for (const r of todo) { i++; $('status').textContent = `Upload ${i}/${todo.length}...`; await uploadRow(r); }
-  const ok = rows.filter(r => r.assetId).length, appr = rows.filter(r => r.mod === 'approved').length;
-  $('status').textContent = `Selesai upload (${ok}/${rows.length} berhasil, ${appr} sudah Approved).`;
+  const problem = credsProblem();
+  if (problem) { $('status').textContent = problem; setBusy(false); return; }
+  const timer = setInterval(() => { $('status').textContent = `Upload paralel (maks 3 sekaligus)` + bulkInfo(todo); }, 700);
+  try {
+    // Semua file dikirim bersamaan (dibatasi 3 sekaligus) dan moderasinya dipantau paralel.
+    await Promise.all(todo.map(r => uploadAndModerate(r)));
+  } finally { clearInterval(timer); }
+  syncUI(); updateLua();
+  $('status').textContent = `Selesai upload (${rows.filter(r => r.assetId).length}/${rows.length} berhasil).` + bulkInfo(todo);
   setBusy(false);
 };
 
@@ -472,8 +535,9 @@ $('checkAll').onclick = async () => {
   const todo = rows.filter(r => r.assetId && r.mod !== 'approved');
   if (!todo.length) return;
   setBusy(true);
-  let i = 0;
-  for (const r of todo) { i++; $('status').textContent = `Cek moderasi ${i}/${todo.length}...`; await checkModeration(r); }
+  const timer = setInterval(() => { $('status').textContent = `Cek moderasi paralel` + bulkInfo(todo); }, 700);
+  try { await Promise.all(todo.map(r => checkLimit(() => checkModeration(r)))); }
+  finally { clearInterval(timer); }
   $('status').textContent = `Cek moderasi selesai (${rows.filter(r => r.mod === 'approved').length}/${rows.filter(r => r.assetId).length} Approved).`;
   setBusy(false);
 };
