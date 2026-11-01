@@ -313,7 +313,17 @@ $('go').onclick = async () => {
 };
 
 // ---------- upload ke Roblox ----------
-function credsOk() { return $('rbKey').value.trim().length >= 20 && /^\d+$/.test($('rbId').value.trim()); }
+// Key Roblox tidak pernah berisi spasi/enter -> buang semua whitespace hasil paste.
+function getKey() { return $('rbKey').value.replace(/\s+/g, ''); }
+function credsProblem() {
+  const k = getKey();
+  if (!k) return 'API key Roblox masih kosong.';
+  if (k.length < 20) return `API key terlalu pendek (${k.length} karakter), salin ulang dari Creator Hub.`;
+  if (!/^[\x21-\x7E]+$/.test(k)) return 'API key mengandung karakter aneh (mis. tanda kutip/spasi khusus). Salin ulang key-nya.';
+  if (!/^\d+$/.test($('rbId').value.trim())) return `Isi ${$('rbType').value === 'group' ? 'Group ID' : 'User ID'} (angka saja) dulu.`;
+  return '';
+}
+function credsOk() { return !credsProblem(); }
 
 async function apiJson(r) {
   let d = {};
@@ -323,9 +333,9 @@ async function apiJson(r) {
 }
 
 async function uploadRow(r) {
-  if (!credsOk()) { r.err = true; r.msg = 'Isi API key Roblox dan Creator ID (angka) dulu.'; paintRow(r); return; }
+  if (!credsOk()) { r.err = true; r.msg = credsProblem(); paintRow(r); return; }
   if (!r.upBlob) { r.err = true; r.msg = 'File terlalu besar untuk diupload lewat Vercel (>4.3 MB).'; paintRow(r); return; }
-  const key = $('rbKey').value.trim();
+  const key = getKey();
   r.err = false; r.msg = 'Mengunggah ke Roblox...'; paintRow(r);
   try {
     const qs = new URLSearchParams({

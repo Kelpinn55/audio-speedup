@@ -29,6 +29,8 @@ MAX_BODY_BYTES = 4_400_000  # batas body Vercel = 4.5 MB
 CONTENT_TYPES = {"mp3": "audio/mpeg", "ogg": "audio/ogg"}
 OP_ID_RE = re.compile(r"^[A-Za-z0-9_-]{6,100}$")
 ID_RE = re.compile(r"^\d{1,20}$")
+KEY_RE = re.compile(r"^[A-Za-z0-9+/=_.~-]+$")  # base64 / base64url / JWT-like
+MAX_KEY_LEN = 4096  # key Roblox bisa sangat panjang (ratusan karakter)
 
 
 class ApiError(Exception):
@@ -38,13 +40,21 @@ class ApiError(Exception):
 
 
 def clean_key(value: str) -> str:
-    key = (value or "").strip()
-    if not (20 <= len(key) <= 500) or re.search(r"\s", key):
-        raise ApiError("API key Roblox kosong atau formatnya tidak valid.", 400)
+    # Hapus semua whitespace (spasi/enter ikut ter-copy saat paste); key asli tidak mengandung whitespace.
+    key = re.sub(r"\s+", "", value or "")
+    if not key:
+        raise ApiError("API key Roblox kosong. Tempel key di kolom API Key.", 400)
+    if len(key) < 20:
+        raise ApiError(f"API key Roblox terlalu pendek ({len(key)} karakter). Pastikan key tersalin utuh.", 400)
+    if len(key) > MAX_KEY_LEN:
+        raise ApiError(f"API key Roblox terlalu panjang ({len(key)} karakter).", 400)
+    if not KEY_RE.match(key):
+        raise ApiError("API key Roblox mengandung karakter yang tidak valid. Salin ulang key dari Creator Hub.", 400)
     return key
 
 
 def roblox_call(req: Request, timeout: int):
+    req.add_header("User-Agent", "audio-speedup/3.0 (+vercel)")
     try:
         with urlopen(req, timeout=timeout) as resp:
             return json.loads(resp.read().decode("utf-8", errors="replace") or "{}")
@@ -62,8 +72,9 @@ def roblox_call(req: Request, timeout: int):
         if e.code == 403:
             raise ApiError(
                 "Akses ditolak Roblox: key perlu izin Assets (asset:read + asset:write), "
-                "pemilik key harus sama dengan Creator ID, dan pembatasan IP key harus dikosongkan "
-                "(0.0.0.0/0)." + detail, 502)
+                "pemilik key harus sama dengan Creator ID (untuk group: buat key dengan owner = Group, "
+                "dan akun pembuat key harus punya izin upload/kelola asset di group), "
+                "serta Accepted IP Addresses harus 0.0.0.0/0." + detail, 502)
         if e.code == 429:
             raise ApiError("Terkena rate limit / kuota upload Roblox. Coba lagi nanti." + detail, 429)
         raise ApiError("Roblox menolak permintaan." + detail, 502)
