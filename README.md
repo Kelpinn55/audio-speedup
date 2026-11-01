@@ -5,34 +5,29 @@ Web app untuk mempercepat audio (nada ikut naik), lalu menguji pemulihan kecepat
 ## Fitur
 
 - Upload audio lokal atau direct link audio (butuh CORS dari server sumber).
-- **YouTube → MP3** lewat Apify actor [`web.harvester/youtube-downloader`](https://apify.com/web.harvester/youtube-downloader).
+- **YouTube → MP3** lewat RapidAPI [`youtube-mp310`](https://rapidapi.com/elisbushaj2/api/youtube-mp310).
 - Restore speed preset `0.43`, `0.44`, atau custom.
-- Ekspor **MP3 (320 kbps)** atau **OGG (Vorbis q10)** lewat WebAssembly di browser.
+- Ekspor **MP3 (320 kbps)** atau **OGG (Vorbis q10)** di browser lewat WebAssembly.
 - Preview, tes restore, unduh hasil, dan unduh MP3 sumber dari YouTube.
 
 ## Alur YouTube
 
-1. Browser mengirim URL ke `POST /api/youtube_audio`; backend memulai run Apify.
-2. Browser memantau `GET /api/youtube_audio?run=ID` sampai selesai (tidak kena timeout function).
-3. File MP3 diunduh langsung dari Apify (jika diblokir CORS, lewat `GET /api/youtube_audio?file=...`, maks ~4.4 MB).
-4. MP3 diperlambat/dipercepat di browser dan di-encode ke MP3 atau OGG sesuai pilihan.
+1. Browser mengirim URL ke `POST /api/youtube_audio`; backend memanggil RapidAPI memakai API key (disimpan di server).
+2. Backend mengembalikan link MP3. Browser mengunduhnya langsung; jika diblokir CORS, lewat `GET /api/youtube_audio?file=...` (maks ~4.4 MB, URL ditandatangani sehingga proxy tidak bisa disalahgunakan).
+3. MP3 dipercepat di browser dan di-encode ke MP3 atau OGG sesuai pilihan.
 
-## Setup Apify
+## Setup RapidAPI
 
-1. Buat akun di https://apify.com, lalu ambil API token di **Settings → API & Integrations**.
-2. Di Vercel: **Project → Settings → Environment Variables**, tambahkan:
-   - `APIFY_TOKEN` = token Apify kamu (wajib).
-   - `APIFY_PROXY_GROUPS` = `RESIDENTIAL` (opsional, hanya jika run biasa sering gagal; proxy residensial lebih mahal).
-3. **Redeploy** setelah menambah environment variable.
+1. Buka halaman API di RapidAPI, klik **Subscribe to Test** dan pilih paket (Basic/gratis jika ada).
+2. Salin **X-RapidAPI-Key** dari panel contoh kode.
+3. Di Vercel: **Settings → Environment Variables**, tambahkan `RAPIDAPI_KEY` = key tersebut. Opsional: `RAPIDAPI_HOST` (default `youtube-mp310.p.rapidapi.com`).
+4. **Redeploy**.
 
-Biaya actor sekitar **$28 per 1.000 file MP3** (cek halaman pricing Apify untuk angka terbaru), belum termasuk biaya proxy.
-**Jangan** menaruh token di `index.html` atau repository.
+Jangan menaruh key di `index.html` atau repository.
 
-## Deploy ke GitHub dan Vercel
+## Deploy
 
-Upload seluruh isi folder ini ke root repository (termasuk file berawalan titik: `.python-version`, `.gitignore`), lalu import ke Vercel dengan Framework Preset **Other**, Build Command kosong, Output Directory kosong.
-
-Struktur:
+Upload seluruh isi folder ke root repository GitHub (termasuk file berawalan titik), import ke Vercel dengan Framework Preset **Other**, Build/Output kosong.
 
 ```text
 .
@@ -47,20 +42,9 @@ Struktur:
 └── README.md
 ```
 
-Tidak ada `requirements.txt` karena backend hanya memakai library standar Python.
-
-Tes endpoint setelah deploy: buka `https://NAMA-PROJECT.vercel.app/api/youtube_audio` → harus menampilkan `{"ok": true, ...}`.
-
-## Pengembangan lokal
-
-```bash
-npm install -g vercel
-vercel dev
-```
-
-Atur `APIFY_TOKEN` lewat `vercel env pull` atau file `.env.local` (jangan di-commit).
+Tes: buka `https://NAMA-PROJECT.vercel.app/api/youtube_audio` → harus menampilkan `{"ok": true, ...}`.
 
 ## Keamanan dan hak cipta
 
-- Endpoint hanya menerima request dari origin yang sama, tetapi tetap bisa menghabiskan kuota Apify. Aktifkan Vercel Firewall/rate limiting jika situs dibuka publik.
+- Endpoint hanya menerima request dari origin yang sama, tetapi tetap bisa menghabiskan kuota API. Aktifkan Vercel Firewall/rate limiting jika dibuka publik.
 - Gunakan hanya untuk konten yang kamu miliki atau boleh kamu unduh.

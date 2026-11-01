@@ -44,7 +44,7 @@
       <input type="url" id="youtubeUrl" placeholder="https://www.youtube.com/watch?v=...">
       <button id="loadYoutube">Muat YouTube</button>
     </div>
-    <div class="info">YouTube &rarr; MP3 diproses lewat Apify (biasanya 10&ndash;60 detik), lalu dikonversi di browser ke format pilihanmu. Gunakan hanya konten yang boleh kamu unduh.</div>
+    <div class="info">YouTube &rarr; MP3 diproses lewat RapidAPI, lalu dikonversi di browser ke format pilihanmu. Gunakan hanya konten yang boleh kamu unduh.</div>
     <div id="sourceDownload" style="display:none;margin-top:10px">
       <a id="sourceDl" download="youtube-audio.m4a"><button type="button">Unduh audio sumber</button></a>
     </div>
@@ -125,8 +125,7 @@ $('loadUrl').onclick = async ()=>{
   }catch(e){ $('status').textContent='Gagal memuat link (bukan file audio langsung, atau diblokir CORS).'; }
 };
 
-// YouTube -> MP3 lewat Apify (backend memulai run, browser memantau status).
-const sleep = ms => new Promise(r => setTimeout(r, ms));
+// YouTube -> MP3 lewat RapidAPI (backend menyimpan API key).
 const API = '/api/youtube_audio';
 
 async function apiJson(r) {
@@ -148,27 +147,15 @@ $('loadYoutube').onclick = async () => {
   $('loadYoutube').disabled = true;
   $('go').disabled = true;
   try {
-    // 1. Mulai run Apify
-    $('status').textContent = 'Memulai konversi YouTube ke MP3...';
-    const start = await apiJson(await fetch(API, {
+    // 1. Minta link MP3 (bisa 5-40 detik)
+    $('status').textContent = 'Mengonversi YouTube ke MP3 (bisa sampai 40 detik)...';
+    const result = await apiJson(await fetch(API, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({url: u})
     }));
 
-    // 2. Pantau sampai selesai (maks 4 menit)
-    const t0 = Date.now();
-    let result = null;
-    while (!result) {
-      await sleep(3000);
-      const secs = Math.round((Date.now() - t0) / 1000);
-      if (secs > 200) throw new Error('Waktu tunggu habis. Kemungkinan YouTube memblokir proxy Apify; coba lagi atau gunakan proxy RESIDENTIAL.');
-      const d = await apiJson(await fetch(`${API}?run=${encodeURIComponent(start.runId)}`, {cache: 'no-store'}));
-      if (d.status === 'SUCCEEDED') result = d;
-      else $('status').textContent = `Apify sedang memproses (${d.status.toLowerCase()}, ${secs} dtk)...`;
-    }
-
-    // 3. Unduh MP3 (langsung dari Apify; jika diblokir CORS, lewat backend)
+    // 2. Unduh MP3 (langsung dari penyedia; jika diblokir CORS, lewat backend)
     $('status').textContent = 'Mengunduh file MP3...';
     let audioBlob;
     try {
@@ -176,12 +163,12 @@ $('loadYoutube').onclick = async () => {
       if (!f.ok) throw new Error('direct failed');
       audioBlob = await f.blob();
     } catch {
-      const f = await fetch(`${API}?file=${encodeURIComponent(result.fileUrl)}`, {cache: 'no-store'});
+      const f = await fetch(`${API}?file=${encodeURIComponent(result.fileUrl)}&sig=${encodeURIComponent(result.sig)}`, {cache: 'no-store'});
       if (!f.ok) await apiJson(f);
       audioBlob = await f.blob();
     }
 
-    const safe = (result.title || 'youtube-audio').replace(/[^\w .()-]+/g, '').trim().slice(0, 80) || 'youtube-audio';
+    const safe = (result.title || 'youtube-audio').replace(/\.mp3$/i, '').replace(/[^\w .()-]+/g, '').trim().slice(0, 80) || 'youtube-audio';
     const name = safe + '.mp3';
     const sourceUrl = URL.createObjectURL(audioBlob);
     $('sourceDl').href = sourceUrl;
