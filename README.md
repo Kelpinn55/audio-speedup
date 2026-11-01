@@ -1,38 +1,47 @@
 # Audio Speed-Up
 
-Web app untuk mempercepat audio (nada ikut naik), lalu menguji pemulihan kecepatan dengan nilai restore.
+Web app untuk mempercepat banyak audio sekaligus (nada ikut naik), meng-upload hasilnya ke Roblox, dan menghasilkan blok Lua siap salin.
 
 ## Fitur
 
-- Upload audio lokal atau direct link audio (butuh CORS dari server sumber).
-- **YouTube → MP3** lewat RapidAPI [`youtube-mp310`](https://rapidapi.com/elisbushaj2/api/youtube-mp310).
+- Pilih/seret **banyak file audio lokal** sekaligus (bulk). Judul lagu bisa diedit per file.
 - Restore speed preset `0.43`, `0.44`, atau custom.
-- Ekspor **MP3 (320 kbps)** atau **OGG (Vorbis q10)** di browser lewat WebAssembly.
-- Preview, tes restore, unduh hasil, dan unduh MP3 sumber dari YouTube.
+- Ekspor **MP3 (320 kbps)** atau **OGG (Vorbis q10)** di browser (WebAssembly).
+- **Upload ke Roblox** lewat Open Cloud Assets API dan tampilkan Asset ID.
+- Hasil siap salin:
 
-## Alur YouTube
+```lua
+			{
+				SongName = "judul lagu",
+				SoundId = "rbxassetid://123456789",
+				ImageId = "rbxassetid://93672832601289",
+				PlaybackSpeed = 0.43,
+			},
+```
 
-1. Browser mengirim URL ke `POST /api/youtube_audio`; backend memanggil RapidAPI memakai API key (disimpan di server).
-2. Backend mengembalikan link MP3. Browser mengunduhnya langsung; jika diblokir CORS, lewat `GET /api/youtube_audio?file=...` (maks ~4.4 MB, URL ditandatangani sehingga proxy tidak bisa disalahgunakan).
-3. MP3 dipercepat di browser dan di-encode ke MP3 atau OGG sesuai pilihan.
+## Cara kerja upload
 
-## Setup RapidAPI
+Browser tidak bisa memanggil `apis.roblox.com` langsung (CORS), jadi file dikirim ke `POST /api/roblox_upload` (Vercel Python Function) yang meneruskannya ke Roblox, lalu browser memantau status operasi sampai Asset ID keluar.
 
-1. Buka halaman API di RapidAPI, klik **Subscribe to Test** dan pilih paket (Basic/gratis jika ada).
-2. Salin **X-RapidAPI-Key** dari panel contoh kode.
-3. Di Vercel: **Settings → Environment Variables**, tambahkan `RAPIDAPI_KEY` = key tersebut. Opsional: `RAPIDAPI_HOST` (default `youtube-mp310.p.rapidapi.com`).
-4. **Redeploy**.
+- API key diisi di halaman, dikirim per request lewat header, **tidak disimpan di server**. Opsi "Ingat" menyimpannya di `localStorage` browser kamu (jangan dipakai di komputer bersama).
+- **Batas Vercel: body request 4.5 MB.** File upload otomatis dibuat ulang dengan kualitas lebih rendah (MP3 320→96 kbps / OGG q10→q0) jika lebih dari 4.3 MB. File yang kamu unduh tetap kualitas terbaik.
+- Batas Roblox: audio maks 7 menit; 10 upload/bulan (belum ID-verified) atau 100 upload/bulan (ID-verified).
 
-Jangan menaruh key di `index.html` atau repository.
+## Membuat API key Roblox
+
+1. Buka https://create.roblox.com/dashboard/credentials → **Create API Key**.
+2. Tambahkan API **Assets** dengan izin **Read** dan **Write**.
+3. Pada **Accepted IP Addresses**, isi `0.0.0.0/0` (IP Vercel tidak tetap).
+4. Salin key (hanya muncul sekali). Pemilik key harus sama dengan Creator ID. Untuk grup, pilih Group sebagai pemilik key dan pakai Group ID.
 
 ## Deploy
 
-Upload seluruh isi folder ke root repository GitHub (termasuk file berawalan titik), import ke Vercel dengan Framework Preset **Other**, Build/Output kosong.
+Upload seluruh isi folder ini ke root repository GitHub (termasuk file berawalan titik), lalu import ke Vercel dengan Framework Preset **Other**, Build/Output kosong. Tidak perlu environment variable.
 
 ```text
 .
 ├── api/
-│   └── youtube_audio.py
+│   └── roblox_upload.py
 ├── public/
 │   └── index.html
 ├── pyproject.toml
@@ -42,9 +51,9 @@ Upload seluruh isi folder ke root repository GitHub (termasuk file berawalan tit
 └── README.md
 ```
 
-Tes: buka `https://NAMA-PROJECT.vercel.app/api/youtube_audio` → harus menampilkan `{"ok": true, ...}`.
+Tes: buka `https://NAMA-PROJECT.vercel.app/api/roblox_upload` → harus menampilkan `{"ok": true, ...}`.
 
-## Keamanan dan hak cipta
+## Catatan
 
-- Endpoint hanya menerima request dari origin yang sama, tetapi tetap bisa menghabiskan kuota API. Aktifkan Vercel Firewall/rate limiting jika dibuka publik.
-- Gunakan hanya untuk konten yang kamu miliki atau boleh kamu unduh.
+- Endpoint hanya menerima request dari origin yang sama.
+- Upload hanya konten yang kamu miliki atau punya izin untuk digunakan; audio bisa ditolak moderasi Roblox.

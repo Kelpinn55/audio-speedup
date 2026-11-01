@@ -1,7 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "functions": {
-    "api/youtube_audio.py": {
+    "api/roblox_upload.py": {
       "maxDuration": 60
     }
   }

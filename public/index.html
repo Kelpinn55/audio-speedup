@@ -6,53 +6,58 @@
 <title>Audio Speed-Up</title>
 <script src="https://unpkg.com/wasm-media-encoders@0.7.0/dist/umd/WasmMediaEncoder.min.js"></script>
 <style>
-  :root{--bg:#0f1115;--card:#181b22;--fg:#e8eaf0;--mut:#8b93a7;--acc:#6c8cff;--bd:#272b36}
-  @media (prefers-color-scheme:light){:root{--bg:#f4f5f8;--card:#fff;--fg:#14161c;--mut:#667;--acc:#3b5bdb;--bd:#dde0e8}}
+  :root{--bg:#0f1115;--card:#181b22;--fg:#e8eaf0;--mut:#8b93a7;--acc:#6c8cff;--bd:#272b36;--ok:#3fb950;--err:#f85149}
+  @media (prefers-color-scheme:light){:root{--bg:#f4f5f8;--card:#fff;--fg:#14161c;--mut:#667;--acc:#3b5bdb;--bd:#dde0e8;--ok:#1a7f37;--err:#cf222e}}
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,sans-serif;padding:20px}
-  main{max-width:560px;margin:0 auto}
+  main{max-width:640px;margin:0 auto}
   h1{font-size:22px;margin:0 0 4px}
   p.sub{color:var(--mut);margin:0 0 20px;font-size:14px}
   .card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:16px;margin-bottom:14px}
+  .card.drag{border-color:var(--acc)}
   label{display:block;font-size:13px;color:var(--mut);margin-bottom:6px}
-  input{width:100%;padding:10px;border-radius:10px;border:1px solid var(--bd);background:var(--bg);color:var(--fg);font-size:15px}
+  input,select,textarea{width:100%;padding:10px;border-radius:10px;border:1px solid var(--bd);background:var(--bg);color:var(--fg);font-size:15px;font-family:inherit}
+  textarea{font:13px/1.45 ui-monospace,Consolas,monospace;min-height:180px;white-space:pre;resize:vertical}
+  input[type=checkbox]{width:auto;margin-right:8px}
   .row{display:flex;gap:8px;flex-wrap:wrap}
+  .row>*{flex:1 1 140px}
+  .row.nofill>*{flex:0 0 auto}
   button{padding:10px 14px;border-radius:10px;border:1px solid var(--bd);background:var(--bg);color:var(--fg);font-size:14px;cursor:pointer}
   button.on,button.primary{background:var(--acc);border-color:var(--acc);color:#fff}
   button:disabled{opacity:.4;cursor:not-allowed}
+  button.sm{padding:6px 10px;font-size:13px}
   .info{font-size:13px;color:var(--mut);margin-top:10px}
-  audio{width:100%;margin-top:10px}
-  .sep{margin:12px 0 6px;font-size:12px;color:var(--mut);text-align:center}
+  .chk{display:flex;align-items:center;font-size:14px;margin-top:10px;color:var(--fg)}
+  .chk label{margin:0;color:var(--fg);font-size:14px}
+  .field{margin-top:10px}
+  .item{border:1px solid var(--bd);border-radius:12px;padding:10px;margin-top:10px;background:var(--bg)}
+  .item .top{display:flex;gap:8px}
+  .item .top input{padding:8px 10px;font-size:14px}
+  .item .meta{font-size:13px;color:var(--mut);margin-top:6px;word-break:break-word}
+  .item .meta.ok{color:var(--ok)}
+  .item .meta.err{color:var(--err)}
+  .item .acts{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;align-items:center}
+  .item audio{width:100%;margin-top:8px}
+  .item a{text-decoration:none}
+  .hidden{display:none!important}
+  code{background:var(--bg);border:1px solid var(--bd);border-radius:6px;padding:1px 5px;font-size:12px}
 </style>
 </head>
 <body>
 <main>
   <h1>Audio Speed-Up</h1>
-  <p class="sub">Percepat audio (nada ikut naik). Putar hasilnya di kecepatan restore untuk kembali normal.</p>
+  <p class="sub">Percepat banyak audio sekaligus (nada ikut naik), lalu upload ke Roblox dan salin hasilnya.</p>
 
-  <div class="card">
-    <label>1. Input audio milikmu</label>
-    <input type="file" id="file" accept="audio/*">
-    <div class="sep">atau</div>
-    <div class="row" style="flex-wrap:nowrap">
-      <input type="url" id="url" placeholder="Link langsung ke file audio (.mp3 / .ogg / .wav)">
-      <button id="loadUrl">Muat</button>
-    </div>
-    <div class="info" id="fileInfo">Link harus mengarah ke file audio langsung dan server asalnya mengizinkan akses (CORS).</div>
-    <div class="sep">atau ambil audio dari YouTube</div>
-    <div class="row" style="flex-wrap:nowrap">
-      <input type="url" id="youtubeUrl" placeholder="https://www.youtube.com/watch?v=...">
-      <button id="loadYoutube">Muat YouTube</button>
-    </div>
-    <div class="info">YouTube &rarr; MP3 diproses lewat RapidAPI, lalu dikonversi di browser ke format pilihanmu. Gunakan hanya konten yang boleh kamu unduh.</div>
-    <div id="sourceDownload" style="display:none;margin-top:10px">
-      <a id="sourceDl" download="youtube-audio.m4a"><button type="button">Unduh audio sumber</button></a>
-    </div>
+  <div class="card" id="dropCard">
+    <label>1. Pilih file audio (bisa banyak sekaligus atau seret ke sini)</label>
+    <input type="file" id="file" accept="audio/*" multiple>
+    <div class="info" id="fileInfo">Belum ada file.</div>
+    <div id="list"></div>
   </div>
 
   <div class="card">
     <label>2. Kecepatan restore (agar audio kembali normal)</label>
-    <div class="row" style="margin-bottom:10px">
+    <div class="row nofill" style="margin-bottom:10px">
       <button class="on" data-r="0.43">0.43</button>
       <button data-r="0.44">0.44</button>
       <button data-r="custom">Custom</button>
@@ -63,70 +68,252 @@
 
   <div class="card">
     <label>3. Format output (kualitas terbaik otomatis)</label>
-    <div class="row" style="margin-bottom:12px">
+    <div class="row nofill">
       <button class="on" data-f="mp3">MP3</button>
       <button data-f="ogg">OGG</button>
     </div>
-    <button class="primary" id="go" disabled>Percepat &amp; buat file</button>
-    <div class="info" id="status"></div>
-    <div id="out" style="display:none">
-      <audio id="player" controls></audio>
-      <div class="row" style="margin-top:10px">
-        <button id="testRestore">Tes restore</button>
-        <a id="dl" download="sped-up.mp3"><button type="button" id="dlBtn">Unduh</button></a>
+  </div>
+
+  <div class="card">
+    <label>4. Upload ke Roblox (Open Cloud Assets API)</label>
+    <div class="field">
+      <label for="rbKey">API Key Roblox (izin Assets: read + write)</label>
+      <input type="password" id="rbKey" autocomplete="off" placeholder="Tempel API key">
+    </div>
+    <div class="row field">
+      <div>
+        <label for="rbType">Upload sebagai</label>
+        <select id="rbType"><option value="user">User</option><option value="group">Group</option></select>
+      </div>
+      <div>
+        <label for="rbId">Creator ID (User ID / Group ID)</label>
+        <input type="text" id="rbId" inputmode="numeric" placeholder="mis. 123456789">
       </div>
     </div>
+    <div class="field">
+      <label for="imageId">ImageId default (untuk hasil Lua)</label>
+      <input type="text" id="imageId" inputmode="numeric" value="93672832601289">
+    </div>
+    <div class="chk"><input type="checkbox" id="autoUp" checked><label for="autoUp">Langsung upload ke Roblox setelah diproses</label></div>
+    <div class="chk"><input type="checkbox" id="remember"><label for="remember">Ingat pengaturan di browser ini (termasuk API key)</label></div>
+    <div class="info">API key hanya dikirim lewat server proxy milikmu ke Roblox dan tidak disimpan di server. Jangan centang &ldquo;Ingat&rdquo; di komputer bersama. Batas Roblox: audio maks 7 menit; 10 upload/bulan (belum ID-verified) atau 100 upload/bulan (ID-verified).</div>
+  </div>
+
+  <div class="card">
+    <div class="row nofill">
+      <button class="primary" id="go" disabled>Proses semua</button>
+      <button id="uploadAll" disabled>Upload semua ke Roblox</button>
+      <button id="clearAll" disabled>Kosongkan</button>
+    </div>
+    <div class="info" id="status"></div>
+  </div>
+
+  <div class="card">
+    <label>5. Hasil siap salin (format Lua)</label>
+    <textarea id="lua" readonly placeholder="Hasil upload akan muncul di sini..."></textarea>
+    <div class="row nofill" style="margin-top:10px">
+      <button id="copyLua" disabled>Salin semua</button>
+    </div>
+    <div class="info" id="luaInfo"></div>
   </div>
 </main>
 
 <script>
 const $ = id => document.getElementById(id);
-const ctx = new (window.AudioContext||window.webkitAudioContext)();
-let buf = null, restore = 0.43, baseName = 'audio', fmt = 'mp3';
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const ctx = new (window.AudioContext || window.webkitAudioContext)();
+const API = '/api/roblox_upload';
+const UPLOAD_MAX = 4_300_000;           // batas body Vercel (4.5 MB) dikurangi margin
+const MP3_LADDER = [320, 256, 192, 160, 128, 96];
+const OGG_LADDER = [10, 8, 6, 4, 2, 0];
 
-const factor = () => 1/restore;
-function refresh(){ $('calc').textContent = `Faktor percepatan = 1 / ${restore} = ${factor().toFixed(4)}x`; }
+let restore = 0.43, fmt = 'mp3', rows = [], nextId = 1, busy = false;
+
+// ---------- pengaturan ----------
+const factor = () => 1 / restore;
+function refresh() { $('calc').textContent = `Faktor percepatan = 1 / ${restore} = ${factor().toFixed(4)}x`; }
 refresh();
 
-document.querySelectorAll('[data-r]').forEach(b=>b.onclick=()=>{
-  document.querySelectorAll('[data-r]').forEach(x=>x.classList.remove('on'));
+document.querySelectorAll('[data-r]').forEach(b => b.onclick = () => {
+  document.querySelectorAll('[data-r]').forEach(x => x.classList.remove('on'));
   b.classList.add('on');
-  if(b.dataset.r!=='custom'){ restore=parseFloat(b.dataset.r); $('restore').value=restore; }
+  if (b.dataset.r !== 'custom') { restore = parseFloat(b.dataset.r); $('restore').value = restore; }
   refresh();
 });
-$('restore').oninput=e=>{ const v=parseFloat(e.target.value); if(v>0&&v<=1){ restore=v; refresh(); } };
-
-document.querySelectorAll('[data-f]').forEach(b=>b.onclick=()=>{
-  document.querySelectorAll('[data-f]').forEach(x=>x.classList.remove('on'));
-  b.classList.add('on'); fmt=b.dataset.f;
+$('restore').oninput = e => { const v = parseFloat(e.target.value); if (v > 0 && v <= 1) { restore = v; refresh(); } };
+document.querySelectorAll('[data-f]').forEach(b => b.onclick = () => {
+  document.querySelectorAll('[data-f]').forEach(x => x.classList.remove('on'));
+  b.classList.add('on'); fmt = b.dataset.f;
 });
 
-async function load(arrayBuffer,name){
-  $('status').textContent='Membaca audio...';
-  try{
-    buf = await ctx.decodeAudioData(arrayBuffer);
-    baseName = name.replace(/\.[^.]+$/,'') || 'audio';
-    $('fileInfo').textContent=`${name} • ${buf.duration.toFixed(1)} detik • ${buf.numberOfChannels} ch • ${buf.sampleRate} Hz`;
-    $('go').disabled=false; $('status').textContent='';
-  }catch(e){ buf=null; $('go').disabled=true; $('status').textContent='Gagal membaca audio (format tidak didukung).'; }
+// ---------- simpan pengaturan Roblox (opsional) ----------
+const STORE = 'audioSpeedupRoblox';
+const store = {
+  get() { try { return JSON.parse(localStorage.getItem(STORE) || 'null'); } catch { return null; } },
+  set(v) { try { localStorage.setItem(STORE, JSON.stringify(v)); } catch {} },
+  clear() { try { localStorage.removeItem(STORE); } catch {} },
+};
+function saveSettings() {
+  if (!$('remember').checked) { store.clear(); return; }
+  store.set({ key: $('rbKey').value, type: $('rbType').value, id: $('rbId').value, image: $('imageId').value, auto: $('autoUp').checked });
+}
+(function loadSettings() {
+  const s = store.get(); if (!s) return;
+  $('remember').checked = true;
+  $('rbKey').value = s.key || ''; $('rbType').value = s.type || 'user';
+  $('rbId').value = s.id || ''; $('imageId').value = s.image || '93672832601289';
+  $('autoUp').checked = s.auto !== false;
+})();
+['rbKey', 'rbType', 'rbId', 'imageId', 'autoUp', 'remember'].forEach(id => $(id).addEventListener('change', () => { saveSettings(); updateLua(); }));
+$('rbKey').addEventListener('input', saveSettings);
+$('rbId').addEventListener('input', saveSettings);
+
+// ---------- antrian file ----------
+function baseOf(name) { return (name.replace(/\.[^.]+$/, '') || 'audio').replace(/[_]+/g, ' ').replace(/\s+/g, ' ').trim(); }
+
+function addFiles(fileList) {
+  const files = [...fileList].filter(f => f.type.startsWith('audio/') || /\.(mp3|ogg|wav|m4a|flac|aac|opus|webm)$/i.test(f.name));
+  for (const f of files) {
+    const r = { id: nextId++, file: f, name: baseOf(f.name), state: 'wait', msg: 'Menunggu diproses', blob: null, upBlob: null, ext: null, url: null, restore: null, assetId: null, err: false };
+    rows.push(r); makeRow(r);
+  }
+  if (fileList.length && !files.length) $('status').textContent = 'Tidak ada file audio yang valid.';
+  syncUI();
+}
+$('file').onchange = e => { addFiles(e.target.files); e.target.value = ''; };
+const drop = $('dropCard');
+['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('drag'); }));
+['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('drag'); }));
+drop.addEventListener('drop', e => addFiles(e.dataTransfer.files));
+
+function makeRow(r) {
+  const el = document.createElement('div'); el.className = 'item';
+  el.innerHTML = `
+    <div class="top"><input class="nm" maxlength="80" aria-label="Judul lagu"><button class="sm rm" title="Hapus">&#10005;</button></div>
+    <div class="meta"></div>
+    <audio class="pl hidden" controls></audio>
+    <div class="acts">
+      <button class="sm tr hidden">Tes restore</button>
+      <a class="dl hidden"><button class="sm" type="button">Unduh</button></a>
+      <button class="sm up hidden">Upload ke Roblox</button>
+      <button class="sm cp hidden">Salin ID</button>
+    </div>`;
+  r.el = el;
+  const q = s => el.querySelector(s);
+  q('.nm').value = r.name;
+  q('.nm').oninput = e => { r.name = e.target.value; updateLua(); };
+  q('.rm').onclick = () => { if (busy) return; if (r.url) URL.revokeObjectURL(r.url); rows = rows.filter(x => x !== r); el.remove(); syncUI(); updateLua(); };
+  q('.tr').onclick = () => { const p = q('.pl'); p.preservesPitch = false; p.mozPreservesPitch = false; p.webkitPreservesPitch = false; p.playbackRate = r.restore; p.currentTime = 0; p.play(); };
+  q('.up').onclick = async () => { if (busy) return; setBusy(true); try { await uploadRow(r); } finally { setBusy(false); } };
+  q('.cp').onclick = () => copyText(r.assetId, q('.cp'));
+  $('list').appendChild(el);
+  paintRow(r);
 }
 
-$('file').onchange = async e=>{
-  const f=e.target.files[0]; if(f) load(await f.arrayBuffer(), f.name);
+function paintRow(r) {
+  const q = s => r.el.querySelector(s);
+  const meta = q('.meta');
+  meta.textContent = r.msg + (r.assetId ? ` • ID: ${r.assetId}` : '');
+  meta.className = 'meta' + (r.err ? ' err' : (r.assetId ? ' ok' : ''));
+  const done = !!r.blob;
+  q('.pl').classList.toggle('hidden', !done);
+  q('.tr').classList.toggle('hidden', !done);
+  q('.dl').classList.toggle('hidden', !done);
+  q('.up').classList.toggle('hidden', !done || !!r.assetId);
+  q('.cp').classList.toggle('hidden', !r.assetId);
+  if (done && r.url && q('.pl').getAttribute('src') !== r.url) {
+    q('.pl').src = r.url;
+    q('.dl').href = r.url;
+    q('.dl').download = `${r.name || 'audio'}-sped-${r.restore}.${r.ext}`;
+    q('.dl button').textContent = `Unduh ${r.ext.toUpperCase()}`;
+  }
+}
+
+function setBusy(v) { busy = v; syncUI(); }
+function syncUI() {
+  const n = rows.length;
+  $('fileInfo').textContent = n ? `${n} file di antrian.` : 'Belum ada file.';
+  $('go').disabled = busy || !rows.some(r => r.state === 'wait' || r.state === 'error');
+  $('uploadAll').disabled = busy || !rows.some(r => r.blob && !r.assetId);
+  $('clearAll').disabled = busy || !n;
+}
+$('clearAll').onclick = () => { rows.forEach(r => r.url && URL.revokeObjectURL(r.url)); rows = []; $('list').innerHTML = ''; $('status').textContent = ''; syncUI(); updateLua(); };
+
+// ---------- encode ----------
+async function encode(ab, type, q) {
+  const ch = Math.min(2, ab.numberOfChannels);
+  const enc = type === 'ogg' ? await WasmMediaEncoder.createOggEncoder() : await WasmMediaEncoder.createMp3Encoder();
+  enc.configure(type === 'ogg'
+    ? { sampleRate: ab.sampleRate, channels: ch, vbrQuality: q }
+    : { sampleRate: ab.sampleRate, channels: ch, bitrate: q });
+  const data = [...Array(ch)].map((_, i) => ab.getChannelData(i));
+  const parts = [], step = 1152 * 32;
+  for (let i = 0; i < ab.length; i += step) {
+    const out = enc.encode(data.map(d => d.subarray(i, Math.min(i + step, ab.length))));
+    if (out.length) parts.push(out.slice());
+  }
+  const last = enc.finalize(); if (last.length) parts.push(last.slice());
+  return new Blob(parts, { type: type === 'ogg' ? 'audio/ogg' : 'audio/mpeg' });
+}
+
+// Versi untuk upload: turunkan kualitas bertahap sampai muat batas body Vercel.
+async function encodeForUpload(ab, type, best) {
+  if (best.size <= UPLOAD_MAX) return best;
+  for (const q of (type === 'ogg' ? OGG_LADDER : MP3_LADDER).slice(1)) {
+    const b = await encode(ab, type, q);
+    if (b.size <= UPLOAD_MAX) return b;
+  }
+  return null;
+}
+
+async function processRow(r) {
+  const type = fmt, rs = restore, f = 1 / rs;
+  r.state = 'work'; r.err = false; r.msg = 'Membaca audio...'; paintRow(r);
+  try {
+    const buf = await ctx.decodeAudioData(await r.file.arrayBuffer());
+    r.msg = 'Mempercepat...'; paintRow(r);
+    const off = new OfflineAudioContext(buf.numberOfChannels, Math.ceil(buf.length / f), buf.sampleRate);
+    const src = off.createBufferSource();
+    src.buffer = buf; src.playbackRate.value = f; src.connect(off.destination); src.start();
+    const rendered = await off.startRendering();
+
+    r.msg = `Encoding ${type.toUpperCase()}...`; paintRow(r);
+    const best = await encode(rendered, type, type === 'ogg' ? 10 : 320);
+    const up = await encodeForUpload(rendered, type, best);
+
+    if (r.url) URL.revokeObjectURL(r.url);
+    r.blob = best; r.upBlob = up; r.ext = type; r.restore = rs; r.assetId = null;
+    r.url = URL.createObjectURL(best);
+    r.state = 'done';
+    r.msg = `Selesai: ${rendered.duration.toFixed(1)} dtk (asli ${buf.duration.toFixed(1)} dtk), ${(best.size / 1048576).toFixed(2)} MB`
+      + (up && up !== best ? ` • versi upload ${(up.size / 1048576).toFixed(2)} MB` : '')
+      + (!up ? ' • terlalu besar untuk diupload (>4.3 MB)' : '');
+    if (!up) r.err = true;
+  } catch (e) {
+    r.state = 'error'; r.err = true; r.msg = 'Gagal: ' + (e && e.message ? e.message : 'format tidak didukung'); r.blob = null;
+  }
+  paintRow(r);
+}
+
+$('go').onclick = async () => {
+  const todo = rows.filter(r => r.state === 'wait' || r.state === 'error');
+  if (!todo.length) return;
+  setBusy(true);
+  let i = 0;
+  for (const r of todo) {
+    i++; $('status').textContent = `Memproses ${i}/${todo.length}...`;
+    await processRow(r);
+    if ($('autoUp').checked && r.blob && r.upBlob) {
+      if (!credsOk()) { r.msg += ' • isi API key & Creator ID untuk auto-upload'; paintRow(r); }
+      else await uploadRow(r);
+    }
+  }
+  $('status').textContent = `Selesai memproses ${todo.length} file.`;
+  setBusy(false);
 };
 
-$('loadUrl').onclick = async ()=>{
-  const u=$('url').value.trim(); if(!u) return;
-  $('status').textContent='Mengunduh...';
-  try{
-    const r=await fetch(u); if(!r.ok) throw new Error('HTTP '+r.status);
-    const name=decodeURIComponent(u.split('?')[0].split('/').pop()||'audio');
-    await load(await r.arrayBuffer(), name);
-  }catch(e){ $('status').textContent='Gagal memuat link (bukan file audio langsung, atau diblokir CORS).'; }
-};
-
-// YouTube -> MP3 lewat RapidAPI (backend menyimpan API key).
-const API = '/api/youtube_audio';
+// ---------- upload ke Roblox ----------
+function credsOk() { return $('rbKey').value.trim().length >= 20 && /^\d+$/.test($('rbId').value.trim()); }
 
 async function apiJson(r) {
   let d = {};
@@ -135,101 +322,76 @@ async function apiJson(r) {
   return d;
 }
 
-$('loadYoutube').onclick = async () => {
-  const u = $('youtubeUrl').value.trim();
-  if (!u) return;
-  let parsed;
-  try { parsed = new URL(u); } catch { $('status').textContent = 'URL YouTube tidak valid.'; return; }
-  if (!['youtube.com', 'www.youtube.com', 'm.youtube.com', 'youtu.be', 'music.youtube.com'].includes(parsed.hostname)) {
-    $('status').textContent = 'Masukkan URL YouTube yang valid.';
-    return;
-  }
-  $('loadYoutube').disabled = true;
-  $('go').disabled = true;
+async function uploadRow(r) {
+  if (!credsOk()) { r.err = true; r.msg = 'Isi API key Roblox dan Creator ID (angka) dulu.'; paintRow(r); return; }
+  if (!r.upBlob) { r.err = true; r.msg = 'File terlalu besar untuk diupload lewat Vercel (>4.3 MB).'; paintRow(r); return; }
+  const key = $('rbKey').value.trim();
+  r.err = false; r.msg = 'Mengunggah ke Roblox...'; paintRow(r);
   try {
-    // 1. Minta link MP3 (bisa 5-40 detik)
-    $('status').textContent = 'Mengonversi YouTube ke MP3 (bisa sampai 40 detik)...';
-    const result = await apiJson(await fetch(API, {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({url: u})
+    const qs = new URLSearchParams({
+      name: (r.name || 'audio').slice(0, 50), ext: r.ext,
+      creatorType: $('rbType').value, creatorId: $('rbId').value.trim(),
+    });
+    const first = await apiJson(await fetch(`${API}?${qs}`, {
+      method: 'POST', headers: { 'x-roblox-key': key, 'Content-Type': r.upBlob.type || 'application/octet-stream' }, body: r.upBlob,
     }));
-
-    // 2. Unduh MP3 (langsung dari penyedia; jika diblokir CORS, lewat backend)
-    $('status').textContent = 'Mengunduh file MP3...';
-    let audioBlob;
-    try {
-      const f = await fetch(result.fileUrl);
-      if (!f.ok) throw new Error('direct failed');
-      audioBlob = await f.blob();
-    } catch {
-      const f = await fetch(`${API}?file=${encodeURIComponent(result.fileUrl)}&sig=${encodeURIComponent(result.sig)}`, {cache: 'no-store'});
-      if (!f.ok) await apiJson(f);
-      audioBlob = await f.blob();
+    let assetId = first.assetId || null;
+    const t0 = Date.now();
+    while (!assetId) {
+      if (Date.now() - t0 > 120000) throw new Error('Waktu tunggu Roblox habis. Cek di Creator Dashboard.');
+      r.msg = `Roblox sedang memproses (${Math.round((Date.now() - t0) / 1000)} dtk)...`; paintRow(r);
+      await sleep(2000);
+      const s = await apiJson(await fetch(`${API}?operation=${encodeURIComponent(first.operationId)}`, { headers: { 'x-roblox-key': key }, cache: 'no-store' }));
+      if (s.done) assetId = s.assetId;
     }
-
-    const safe = (result.title || 'youtube-audio').replace(/\.mp3$/i, '').replace(/[^\w .()-]+/g, '').trim().slice(0, 80) || 'youtube-audio';
-    const name = safe + '.mp3';
-    const sourceUrl = URL.createObjectURL(audioBlob);
-    $('sourceDl').href = sourceUrl;
-    $('sourceDl').download = name;
-    $('sourceDownload').style.display = 'block';
-
-    await load(await audioBlob.arrayBuffer(), name);
-    if (buf) {
-      $('fileInfo').textContent = `Sumber YouTube \u2022 ${name} \u2022 ${(audioBlob.size/1048576).toFixed(2)} MB`;
-      $('status').textContent = 'MP3 dari YouTube siap. Pilih format output lalu klik "Percepat & buat file".';
-    }
+    r.assetId = assetId; r.msg = 'Terupload ke Roblox';
   } catch (e) {
-    $('status').textContent = `Gagal memuat YouTube: ${e.message}`;
-  } finally {
-    $('loadYoutube').disabled = false;
-    $('go').disabled = !buf;
+    r.err = true; r.msg = 'Upload gagal: ' + e.message;
   }
-};
-
-// MP3: CBR 320 kbps (maksimum). OGG: Vorbis VBR quality 10 (maksimum).
-async function encode(ab, type){
-  const ch=Math.min(2,ab.numberOfChannels);
-  const enc = type==='ogg' ? await WasmMediaEncoder.createOggEncoder() : await WasmMediaEncoder.createMp3Encoder();
-  enc.configure(type==='ogg'
-    ? {sampleRate:ab.sampleRate, channels:ch, vbrQuality:10}
-    : {sampleRate:ab.sampleRate, channels:ch, bitrate:320});
-  const data=[...Array(ch)].map((_,i)=>ab.getChannelData(i));
-  const parts=[], step=1152*32;
-  for(let i=0;i<ab.length;i+=step){
-    const out=enc.encode(data.map(d=>d.subarray(i,Math.min(i+step,ab.length))));
-    if(out.length) parts.push(out.slice());
-  }
-  const last=enc.finalize(); if(last.length) parts.push(last.slice());
-  return new Blob(parts,{type:type==='ogg'?'audio/ogg':'audio/mpeg'});
+  paintRow(r); syncUI(); updateLua();
 }
 
-$('go').onclick = async ()=>{
-  if(!buf) return;
-  $('go').disabled=true; $('status').textContent='Memproses...';
-  try{
-    const f=factor(), len=Math.ceil(buf.length/f);
-    const off=new OfflineAudioContext(buf.numberOfChannels,len,buf.sampleRate);
-    const src=off.createBufferSource();
-    src.buffer=buf; src.playbackRate.value=f; src.connect(off.destination); src.start();
-    const rendered=await off.startRendering();
-    $('status').textContent=`Encoding ${fmt.toUpperCase()}...`;
-    const blob=await encode(rendered,fmt);
-    const url=URL.createObjectURL(blob);
-    $('player').src=url; $('dl').href=url; $('dl').download=`${baseName}-sped-${restore}.${fmt}`;
-    $('dlBtn').textContent=`Unduh ${fmt.toUpperCase()}`;
-    $('out').style.display='block';
-    $('status').textContent=`Selesai: ${rendered.duration.toFixed(1)} detik (asli ${buf.duration.toFixed(1)} detik), ${(blob.size/1048576).toFixed(2)} MB.`;
-  }catch(e){ $('status').textContent='Gagal memproses: '+e.message; }
-  $('go').disabled=false;
+$('uploadAll').onclick = async () => {
+  const todo = rows.filter(r => r.blob && !r.assetId);
+  if (!todo.length) return;
+  setBusy(true);
+  let i = 0;
+  for (const r of todo) { i++; $('status').textContent = `Upload ${i}/${todo.length}...`; await uploadRow(r); }
+  $('status').textContent = `Selesai upload (${rows.filter(r => r.assetId).length}/${rows.length} berhasil).`;
+  setBusy(false);
 };
 
-$('testRestore').onclick=()=>{
-  const p=$('player');
-  p.preservesPitch=false; p.mozPreservesPitch=false; p.webkitPreservesPitch=false;
-  p.playbackRate=restore; p.currentTime=0; p.play();
-};
+// ---------- hasil Lua ----------
+const luaStr = s => String(s || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/[\r\n]+/g, ' ');
+
+function luaFor(r, imageId) {
+  return [
+    '\t\t\t{',
+    `\t\t\t\tSongName = "${luaStr(r.name)}",`,
+    `\t\t\t\tSoundId = "rbxassetid://${r.assetId}",`,
+    `\t\t\t\tImageId = "rbxassetid://${imageId}",`,
+    `\t\t\t\tPlaybackSpeed = ${r.restore},`,
+    '\t\t\t},',
+  ].join('\n');
+}
+
+function updateLua() {
+  const imageId = ($('imageId').value.trim().replace(/\D/g, '')) || '93672832601289';
+  const done = rows.filter(r => r.assetId);
+  $('lua').value = done.map(r => luaFor(r, imageId)).join('\n');
+  $('copyLua').disabled = !done.length;
+  $('luaInfo').textContent = done.length ? `${done.length} lagu siap disalin.` : '';
+}
+$('imageId').addEventListener('input', updateLua);
+
+async function copyText(text, btn) {
+  try { await navigator.clipboard.writeText(text); }
+  catch { const t = document.createElement('textarea'); t.value = text; document.body.appendChild(t); t.select(); document.execCommand('copy'); t.remove(); }
+  if (btn) { const old = btn.textContent; btn.textContent = 'Tersalin!'; setTimeout(() => btn.textContent = old, 1200); }
+}
+$('copyLua').onclick = () => copyText($('lua').value, $('copyLua'));
+
+syncUI(); updateLua();
 </script>
 </body>
 </html>
