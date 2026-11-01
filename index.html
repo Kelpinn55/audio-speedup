@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Audio Speed-Up</title>
+<script src="https://unpkg.com/wasm-media-encoders@0.7.0/dist/umd/WasmMediaEncoder.min.js"></script>
+<style>
+  :root{--bg:#0f1115;--card:#181b22;--fg:#e8eaf0;--mut:#8b93a7;--acc:#6c8cff;--bd:#272b36}
+  @media (prefers-color-scheme:light){:root{--bg:#f4f5f8;--card:#fff;--fg:#14161c;--mut:#667;--acc:#3b5bdb;--bd:#dde0e8}}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,sans-serif;padding:20px}
+  main{max-width:560px;margin:0 auto}
+  h1{font-size:22px;margin:0 0 4px}
+  p.sub{color:var(--mut);margin:0 0 20px;font-size:14px}
+  .card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:16px;margin-bottom:14px}
+  label{display:block;font-size:13px;color:var(--mut);margin-bottom:6px}
+  input{width:100%;padding:10px;border-radius:10px;border:1px solid var(--bd);background:var(--bg);color:var(--fg);font-size:15px}
+  .row{display:flex;gap:8px;flex-wrap:wrap}
+  button{padding:10px 14px;border-radius:10px;border:1px solid var(--bd);background:var(--bg);color:var(--fg);font-size:14px;cursor:pointer}
+  button.on,button.primary{background:var(--acc);border-color:var(--acc);color:#fff}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  .info{font-size:13px;color:var(--mut);margin-top:10px}
+  audio{width:100%;margin-top:10px}
+  .sep{margin:12px 0 6px;font-size:12px;color:var(--mut);text-align:center}
+</style>
+</head>
+<body>
+<main>
+  <h1>Audio Speed-Up</h1>
+  <p class="sub">Percepat audio (nada ikut naik). Putar hasilnya di kecepatan restore untuk kembali normal.</p>
+
+  <div class="card">
+    <label>1. Input audio milikmu</label>
+    <input type="file" id="file" accept="audio/*">
+    <div class="sep">atau</div>
+    <div class="row" style="flex-wrap:nowrap">
+      <input type="url" id="url" placeholder="Link langsung ke file audio (.mp3 / .ogg / .wav)">
+      <button id="loadUrl">Muat</button>
+    </div>
+    <div class="info" id="fileInfo">Link harus mengarah ke file audio langsung dan server asalnya mengizinkan akses (CORS).</div>
+    <div class="sep">atau ambil audio dari YouTube</div>
+    <div class="row" style="flex-wrap:nowrap">
+      <input type="url" id="youtubeUrl" placeholder="https://www.youtube.com/watch?v=...">
+      <button id="loadYoutube">Muat YouTube</button>
+    </div>
+    <div class="info">YouTube diproses oleh Vercel Function. Batas input YouTube: maksimal 4 MB dan 5 menit per video. Gunakan hanya konten yang boleh kamu unduh.</div>
+  </div>
+
+  <div class="card">
+    <label>2. Kecepatan restore (agar audio kembali normal)</label>
+    <div class="row" style="margin-bottom:10px">
+      <button class="on" data-r="0.43">0.43</button>
+      <button data-r="0.44">0.44</button>
+      <button data-r="custom">Custom</button>
+    </div>
+    <input type="number" id="restore" step="0.001" min="0.1" max="1" value="0.43">
+    <div class="info" id="calc"></div>
+  </div>
+
+  <div class="card">
+    <label>3. Format output (kualitas terbaik otomatis)</label>
+    <div class="row" style="margin-bottom:12px">
+      <button class="on" data-f="mp3">MP3</button>
+      <button data-f="ogg">OGG</button>
+    </div>
+    <button class="primary" id="go" disabled>Percepat &amp; buat file</button>
+    <div class="info" id="status"></div>
+    <div id="out" style="display:none">
+      <audio id="player" controls></audio>
+      <div class="row" style="margin-top:10px">
+        <button id="testRestore">Tes restore</button>
+        <a id="dl" download="sped-up.mp3"><button type="button" id="dlBtn">Unduh</button></a>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const ctx = new (window.AudioContext||window.webkitAudioContext)();
+let buf = null, restore = 0.43, baseName = 'audio', fmt = 'mp3';
+
+const factor = () => 1/restore;
+function refresh(){ $('calc').textContent = `Faktor percepatan = 1 / ${restore} = ${factor().toFixed(4)}x`; }
+refresh();
+
+document.querySelectorAll('[data-r]').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('[data-r]').forEach(x=>x.classList.remove('on'));
+  b.classList.add('on');
+  if(b.dataset.r!=='custom'){ restore=parseFloat(b.dataset.r); $('restore').value=restore; }
+  refresh();
+});
+$('restore').oninput=e=>{ const v=parseFloat(e.target.value); if(v>0&&v<=1){ restore=v; refresh(); } };
+
+document.querySelectorAll('[data-f]').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('[data-f]').forEach(x=>x.classList.remove('on'));
+  b.classList.add('on'); fmt=b.dataset.f;
+});
+
+async function load(arrayBuffer,name){
+  $('status').textContent='Membaca audio...';
+  try{
+    buf = await ctx.decodeAudioData(arrayBuffer);
+    baseName = name.replace(/\.[^.]+$/,'') || 'audio';
+    $('fileInfo').textContent=`${name} • ${buf.duration.toFixed(1)} detik • ${buf.numberOfChannels} ch • ${buf.sampleRate} Hz`;
+    $('go').disabled=false; $('status').textContent='';
+  }catch(e){ buf=null; $('go').disabled=true; $('status').textContent='Gagal membaca audio (format tidak didukung).'; }
+}
+
+$('file').onchange = async e=>{
+  const f=e.target.files[0]; if(f) load(await f.arrayBuffer(), f.name);
+};
+
+$('loadUrl').onclick = async ()=>{
+  const u=$('url').value.trim(); if(!u) return;
+  $('status').textContent='Mengunduh...';
+  try{
+    const r=await fetch(u); if(!r.ok) throw new Error('HTTP '+r.status);
+    const name=decodeURIComponent(u.split('?')[0].split('/').pop()||'audio');
+    await load(await r.arrayBuffer(), name);
+  }catch(e){ $('status').textContent='Gagal memuat link (bukan file audio langsung, atau diblokir CORS).'; }
+};
+
+// YouTube: audio diambil oleh Vercel Python Function menggunakan yt-dlp (tanpa FFmpeg).
+$('loadYoutube').onclick = async () => {
+  const u = $('youtubeUrl').value.trim();
+  if (!u) return;
+  let parsed;
+  try { parsed = new URL(u); } catch { $('status').textContent = 'URL YouTube tidak valid.'; return; }
+  if (!['youtube.com', 'www.youtube.com', 'm.youtube.com', 'youtu.be', 'music.youtube.com'].includes(parsed.hostname)) {
+    $('status').textContent = 'Masukkan URL YouTube yang valid.';
+    return;
+  }
+  $('loadYoutube').disabled = true;
+  $('status').textContent = 'Mengambil audio dari YouTube melalui backend...';
+  try {
+    const r = await fetch('/api/youtube-audio', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({url: u})
+    });
+    if (!r.ok) {
+      let msg = 'Backend gagal mengambil audio.';
+      try { const data = await r.json(); if (data.error) msg = data.error; } catch {}
+      throw new Error(msg);
+    }
+    const name = r.headers.get('X-Audio-Filename') || 'youtube-audio.m4a';
+    await load(await r.arrayBuffer(), name);
+    $('fileInfo').textContent = `Sumber YouTube • ${name}`;
+    $('status').textContent = 'Audio YouTube berhasil dimuat.';
+  } catch (e) {
+    $('status').textContent = `Gagal memuat YouTube: ${e.message}. Periksa deployment Vercel dan batas ukuran/durasi.`;
+  } finally {
+    $('loadYoutube').disabled = false;
+  }
+};
+
+// MP3: CBR 320 kbps (maksimum). OGG: Vorbis VBR quality 10 (maksimum).
+async function encode(ab, type){
+  const ch=Math.min(2,ab.numberOfChannels);
+  const enc = type==='ogg' ? await WasmMediaEncoder.createOggEncoder() : await WasmMediaEncoder.createMp3Encoder();
+  enc.configure(type==='ogg'
+    ? {sampleRate:ab.sampleRate, channels:ch, vbrQuality:10}
+    : {sampleRate:ab.sampleRate, channels:ch, bitrate:320});
+  const data=[...Array(ch)].map((_,i)=>ab.getChannelData(i));
+  const parts=[], step=1152*32;
+  for(let i=0;i<ab.length;i+=step){
+    const out=enc.encode(data.map(d=>d.subarray(i,Math.min(i+step,ab.length))));
+    if(out.length) parts.push(out.slice());
+  }
+  const last=enc.finalize(); if(last.length) parts.push(last.slice());
+  return new Blob(parts,{type:type==='ogg'?'audio/ogg':'audio/mpeg'});
+}
+
+$('go').onclick = async ()=>{
+  if(!buf) return;
+  $('go').disabled=true; $('status').textContent='Memproses...';
+  try{
+    const f=factor(), len=Math.ceil(buf.length/f);
+    const off=new OfflineAudioContext(buf.numberOfChannels,len,buf.sampleRate);
+    const src=off.createBufferSource();
+    src.buffer=buf; src.playbackRate.value=f; src.connect(off.destination); src.start();
+    const rendered=await off.startRendering();
+    $('status').textContent=`Encoding ${fmt.toUpperCase()}...`;
+    const blob=await encode(rendered,fmt);
+    const url=URL.createObjectURL(blob);
+    $('player').src=url; $('dl').href=url; $('dl').download=`${baseName}-sped-${restore}.${fmt}`;
+    $('dlBtn').textContent=`Unduh ${fmt.toUpperCase()}`;
+    $('out').style.display='block';
+    $('status').textContent=`Selesai: ${rendered.duration.toFixed(1)} detik (asli ${buf.duration.toFixed(1)} detik), ${(blob.size/1048576).toFixed(2)} MB.`;
+  }catch(e){ $('status').textContent='Gagal memproses: '+e.message; }
+  $('go').disabled=false;
+};
+
+$('testRestore').onclick=()=>{
+  const p=$('player');
+  p.preservesPitch=false; p.mozPreservesPitch=false; p.webkitPreservesPitch=false;
+  p.playbackRate=restore; p.currentTime=0; p.play();
+};
+</script>
+</body>
+</html>
