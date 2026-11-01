@@ -28,7 +28,7 @@ Vercel Functions membatasi response body hingga 4.5 MB. Batas 4 MB di aplikasi m
 
 1. Buat repository baru di GitHub.
 2. Upload seluruh isi folder ini ke root repository (bukan folder ZIP di dalam repository).
-3. Pastikan `index.html`, `vercel.json`, `requirements.txt`, `.python-version`, dan folder `api/` berada di root.
+3. Pastikan `public/index.html`, `vercel.json`, `pyproject.toml`, `requirements.txt`, `.python-version`, dan folder `api/` berada di root.
 
 Atau melalui Git:
 
@@ -52,7 +52,7 @@ git push -u origin main
 7. Output Directory: kosongkan.
 8. Klik **Deploy**.
 
-Vercel akan menyajikan `index.html` sebagai static page dan mendeteksi `api/youtube_audio.py` sebagai Python Function.
+Vercel akan menyajikan `public/index.html` sebagai static page dan mendeteksi `api/youtube_audio.py` sebagai Python Function.
 
 ### 3. Tes endpoint
 
@@ -100,7 +100,8 @@ Buka URL lokal yang ditampilkan Vercel CLI.
 .
 ├── api/
 │   └── youtube_audio.py
-├── index.html
+├── public/
+│   └── index.html
 ├── requirements.txt
 ├── vercel.json
 ├── .python-version
