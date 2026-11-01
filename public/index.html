@@ -44,7 +44,10 @@
       <input type="url" id="youtubeUrl" placeholder="https://www.youtube.com/watch?v=...">
       <button id="loadYoutube">Muat YouTube</button>
     </div>
-    <div class="info">YouTube diproses oleh Vercel Function. Batas input YouTube: maksimal 4 MB dan 5 menit per video. Gunakan hanya konten yang boleh kamu unduh.</div>
+    <div class="info">YouTube diproses oleh backend. Batas respons Vercel: audio maksimal 4 MB dan durasi 5 menit. Gunakan hanya konten yang boleh kamu unduh.</div>
+    <div id="sourceDownload" style="display:none;margin-top:10px">
+      <a id="sourceDl" download="youtube-audio.m4a"><button type="button">Unduh audio sumber</button></a>
+    </div>
   </div>
 
   <div class="card">
@@ -146,11 +149,16 @@ $('loadYoutube').onclick = async () => {
       throw new Error(msg);
     }
     const name = r.headers.get('X-Audio-Filename') || 'youtube-audio.m4a';
-    await load(await r.arrayBuffer(), name);
-    $('fileInfo').textContent = `Sumber YouTube • ${name}`;
-    $('status').textContent = 'Audio YouTube berhasil dimuat.';
+    const audioBlob = await r.blob();
+    const sourceUrl = URL.createObjectURL(audioBlob);
+    $('sourceDl').href = sourceUrl;
+    $('sourceDl').download = name;
+    $('sourceDownload').style.display = 'block';
+    await load(await audioBlob.arrayBuffer(), name);
+    $('fileInfo').textContent = `Sumber YouTube • ${name} • ${(audioBlob.size/1048576).toFixed(2)} MB`;
+    $('status').textContent = 'Audio YouTube berhasil dimuat. Kamu juga bisa mengunduh file sumber.';
   } catch (e) {
-    $('status').textContent = `Gagal memuat YouTube: ${e.message}. Periksa deployment Vercel dan batas ukuran/durasi.`;
+    $('status').textContent = `Gagal memuat YouTube: ${e.message}`;
   } finally {
     $('loadYoutube').disabled = false;
   }

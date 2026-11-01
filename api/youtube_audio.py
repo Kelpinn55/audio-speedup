@@ -62,15 +62,22 @@ class handler(BaseHTTPRequestHandler):
             with tempfile.TemporaryDirectory(dir="/tmp", prefix="youtube-audio-") as temp_dir:
                 output_template = str(Path(temp_dir) / "source.%(ext)s")
                 options = {
-                    "format": "bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio",
+                    # Prefer a compact audio-only stream so short videos fit Vercel's
+                    # 4.5 MB function response limit. No login/cookie circumvention.
+                    "format": "worstaudio[ext=m4a]/worstaudio/bestaudio[ext=m4a]/bestaudio",
                     "outtmpl": output_template,
                     "noplaylist": True,
                     "quiet": True,
                     "no_warnings": True,
                     "restrictfilenames": True,
-                    "socket_timeout": 20,
-                    "retries": 1,
-                    "fragment_retries": 1,
+                     "socket_timeout": 25,
+                    "retries": 2,
+                    "fragment_retries": 2,
+                    "extractor_retries": 2,
+                    "http_headers": {
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/130.0.0.0 Safari/537.36",
+                        "Accept-Language": "en-US,en;q=0.9,id;q=0.8",
+                    },
                     "max_filesize": MAX_AUDIO_BYTES,
                     "overwrites": True,
                     "cachedir": False,  # filesystem Vercel read-only kecuali /tmp
@@ -144,8 +151,17 @@ class handler(BaseHTTPRequestHandler):
                 message = "Video membutuhkan login atau memiliki pembatasan akses."
             elif "Unsupported URL" in message:
                 message = "URL YouTube tidak didukung."
+            elif "HTTP Error 403" in message or "HTTP Error 429" in message:
+                message = "YouTube menolak koneksi dari server Vercel (403/429). Coba lagi nanti atau gunakan file audio lokal."
+            elif "Video unavailable" in message or "Private video" in message:
+                message = "Video tidak tersedia untuk diakses secara publik."
+            elif "File is larger than" in message or "filesize" in message.lower():
+                message = "Ukuran audio melebihi batas 4 MB yang dapat dikirim oleh Vercel."
             else:
-                message = "Gagal mengambil audio. Video mungkin dibatasi, tidak tersedia, atau YouTube menolak permintaan dari server."
+                # Log detail server-side for deployment diagnostics, but do not
+                # expose internal paths or stack traces to visitors.
+                print("yt-dlp error:", repr(exc))
+                message = "YouTube gagal menyediakan stream untuk server. Bisa karena pembatasan akses, video tidak tersedia, atau perubahan YouTube/yt-dlp."
             self._json(422, {"error": message})
 
     def log_message(self, format, *args):
