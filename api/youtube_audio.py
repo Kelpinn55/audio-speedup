@@ -12,6 +12,7 @@ Alur (supaya tidak kena timeout function Vercel):
 Environment variable di Vercel:
   APIFY_TOKEN          (wajib)  token API Apify
   APIFY_PROXY_GROUPS   (opsional) mis. "RESIDENTIAL" jika run biasa sering gagal
+  APIFY_MAX_RETRIES    (opsional) default 5
 """
 import json
 import os
@@ -32,6 +33,8 @@ ALLOWED_HOSTS = {
 }
 RUN_ID_RE = re.compile(r"^[A-Za-z0-9]{8,40}$")
 MAX_PROXY_BYTES = 4_400_000  # batas aman respons Vercel (4.5 MB)
+RUN_TIMEOUT_SECS = 180  # Apify menghentikan run otomatis (hemat biaya)
+MAX_RETRIES = int(os.environ.get("APIFY_MAX_RETRIES", "5"))  # default actor 25 = lama & mahal kalau diblokir
 FAILED_STATES = {"FAILED", "ABORTING", "ABORTED", "TIMING-OUT", "TIMED-OUT"}
 
 
@@ -214,10 +217,10 @@ class handler(BaseHTTPRequestHandler):
             if groups:
                 proxy["apifyProxyGroups"] = groups
 
-            run = apify_json("POST", f"/actors/{ACTOR}/runs", {
+            run = apify_json("POST", f"/actors/{ACTOR}/runs?timeout={RUN_TIMEOUT_SECS}", {
                 "youtubeUrls": [{"url": url}],
                 "includeInfo": True,
-                "maxRequestRetries": 25,
+                "maxRequestRetries": MAX_RETRIES,
                 "proxyConfiguration": proxy,
             })["data"]
             self._json(200, {"runId": run["id"], "status": run.get("status", "READY")})

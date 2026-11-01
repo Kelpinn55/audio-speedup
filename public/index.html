@@ -162,7 +162,7 @@ $('loadYoutube').onclick = async () => {
     while (!result) {
       await sleep(3000);
       const secs = Math.round((Date.now() - t0) / 1000);
-      if (secs > 240) throw new Error('Waktu tunggu habis. Coba lagi.');
+      if (secs > 200) throw new Error('Waktu tunggu habis. Kemungkinan YouTube memblokir proxy Apify; coba lagi atau gunakan proxy RESIDENTIAL.');
       const d = await apiJson(await fetch(`${API}?run=${encodeURIComponent(start.runId)}`, {cache: 'no-store'}));
       if (d.status === 'SUCCEEDED') result = d;
       else $('status').textContent = `Apify sedang memproses (${d.status.toLowerCase()}, ${secs} dtk)...`;
