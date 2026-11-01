@@ -7,7 +7,7 @@ Web app untuk mempercepat banyak audio sekaligus (nada ikut naik), meng-upload h
 - Pilih/seret **banyak file audio lokal** sekaligus (bulk). Judul lagu bisa diedit per file.
 - Restore speed preset `0.43`, `0.44`, atau custom.
 - Ekspor **OGG (Vorbis q10, default)** atau **MP3 (320 kbps)** di browser (WebAssembly).
-- **Upload ke Roblox** lewat Open Cloud Assets API dan tampilkan Asset ID. Nama asset di Roblox dibuat `no copyright song <angka acak>`; `SongName` di hasil Lua memakai nama file asli (bisa diedit).
+- **Upload ke Roblox** lewat Open Cloud Assets API dan tampilkan Asset ID. Nama asset di Roblox dibuat `random song no cpr <angka 1-99>` dengan deskripsi kosong; `SongName` di hasil Lua memakai nama file asli (bisa diedit).
 - **Validasi Creator ID**: menampilkan nama Group/User sebelum upload.
 - **Cek moderasi**: status Approved/Reviewing/Rejected ditampilkan per file. Audio yang belum Approved tidak bisa diputar di Studio ("Asset is not approved for the requester"); audio milik Group hanya bisa dipakai di game milik Group yang sama.
 - Hasil siap salin:

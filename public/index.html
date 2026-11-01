@@ -345,14 +345,11 @@ async function apiJson(r) {
   return d;
 }
 
-// Nama asset di Roblox: "no copyright song <angka acak>" (tanpa judul asli).
+// Nama asset di Roblox: "random song no cpr <angka 1-99>" (tanpa judul asli).
 // Judul asli (nama file) tetap dipakai untuk SongName di hasil Lua.
-const usedNums = new Set();
 function randomName() {
-  let n;
-  do { n = 1 + (crypto.getRandomValues(new Uint32Array(1))[0] % 99999); } while (usedNums.has(n));
-  usedNums.add(n);
-  return `no copyright song ${n}`;
+  const n = 1 + (crypto.getRandomValues(new Uint32Array(1))[0] % 99);
+  return `random song no cpr ${n}`;
 }
 
 // ---------- validasi Creator (nama Group / User) ----------

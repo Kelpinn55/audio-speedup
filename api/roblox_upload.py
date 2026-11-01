@@ -242,7 +242,7 @@ class handler(BaseHTTPRequestHandler):
             request_json = json.dumps({
                 "assetType": "Audio",
                 "displayName": name,
-                "description": name,
+                "description": "",
                 "creationContext": {"creator": creator},
             })
 
