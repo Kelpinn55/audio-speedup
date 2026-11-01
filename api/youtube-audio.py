@@ -59,7 +59,7 @@ class handler(BaseHTTPRequestHandler):
                 return self._json(400, {"error": "Masukkan URL YouTube yang valid."})
 
             # No playlists, no external post-processing binaries.
-            with tempfile.TemporaryDirectory(prefix="/tmp/youtube-audio-") as temp_dir:
+            with tempfile.TemporaryDirectory(dir="/tmp", prefix="youtube-audio-") as temp_dir:
                 output_template = str(Path(temp_dir) / "source.%(ext)s")
                 options = {
                     "format": "bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio",
@@ -73,6 +73,7 @@ class handler(BaseHTTPRequestHandler):
                     "fragment_retries": 1,
                     "max_filesize": MAX_AUDIO_BYTES,
                     "overwrites": True,
+                    "cachedir": False,  # filesystem Vercel read-only kecuali /tmp
                 }
 
                 with YoutubeDL(options) as ydl:
@@ -99,7 +100,10 @@ class handler(BaseHTTPRequestHandler):
                             downloaded_path = str(candidates[0])
 
                     if not downloaded_path or not os.path.isfile(downloaded_path):
-                        return self._json(502, {"error": "Audio YouTube gagal diunduh."})
+                        return self._json(
+                            413,
+                            {"error": "Audio gagal diunduh (kemungkinan melebihi 4 MB atau dibatasi YouTube)."}
+                        )
 
                     size = os.path.getsize(downloaded_path)
                     if size > MAX_AUDIO_BYTES:
