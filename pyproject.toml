@@ -1,0 +1,10 @@
+[project]
+name = "audio-speedup"
+version = "1.0.0"
+requires-python = ">=3.12"
+dependencies = [
+    "yt-dlp>=2025.1.15",
+]
+
+[tool.vercel]
+entrypoint = "api.youtube-audio:handler"
