@@ -69,8 +69,8 @@
   <div class="card">
     <label>3. Format output (kualitas terbaik otomatis)</label>
     <div class="row nofill">
-      <button class="on" data-f="mp3">MP3</button>
-      <button data-f="ogg">OGG</button>
+      <button data-f="mp3">MP3</button>
+      <button class="on" data-f="ogg">OGG</button>
     </div>
   </div>
 
@@ -90,19 +90,24 @@
         <input type="text" id="rbId" inputmode="numeric" placeholder="mis. 123456789">
       </div>
     </div>
+    <div class="row nofill field" style="align-items:center">
+      <button class="sm" id="validateBtn" type="button">Validasi ID</button>
+      <span class="info" id="creatorInfo" style="margin:0"></span>
+    </div>
     <div class="field">
       <label for="imageId">ImageId default (untuk hasil Lua)</label>
       <input type="text" id="imageId" inputmode="numeric" value="93672832601289">
     </div>
     <div class="chk"><input type="checkbox" id="autoUp" checked><label for="autoUp">Langsung upload ke Roblox setelah diproses</label></div>
     <div class="chk"><input type="checkbox" id="remember"><label for="remember">Ingat pengaturan di browser ini (termasuk API key)</label></div>
-    <div class="info">API key hanya dikirim lewat server proxy milikmu ke Roblox dan tidak disimpan di server. Jangan centang &ldquo;Ingat&rdquo; di komputer bersama. Batas Roblox: audio maks 7 menit; 10 upload/bulan (belum ID-verified) atau 100 upload/bulan (ID-verified).</div>
+    <div class="info">API key hanya dikirim lewat server proxy milikmu ke Roblox dan tidak disimpan di server. Jangan centang &ldquo;Ingat&rdquo; di komputer bersama. Audio milik Group hanya bisa diputar di game milik Group yang sama (audio bersifat privat). Audio juga harus berstatus <b>Approved</b> oleh moderasi Roblox. Batas Roblox: audio maks 7 menit; 10 upload/bulan (belum ID-verified) atau 100 upload/bulan (ID-verified).</div>
   </div>
 
   <div class="card">
     <div class="row nofill">
       <button class="primary" id="go" disabled>Proses semua</button>
       <button id="uploadAll" disabled>Upload semua ke Roblox</button>
+      <button id="checkAll" disabled>Cek status moderasi</button>
       <button id="clearAll" disabled>Kosongkan</button>
     </div>
     <div class="info" id="status"></div>
@@ -127,7 +132,7 @@ const UPLOAD_MAX = 4_300_000;           // batas body Vercel (4.5 MB) dikurangi 
 const MP3_LADDER = [320, 256, 192, 160, 128, 96];
 const OGG_LADDER = [10, 8, 6, 4, 2, 0];
 
-let restore = 0.43, fmt = 'mp3', rows = [], nextId = 1, busy = false;
+let restore = 0.43, fmt = 'ogg', rows = [], nextId = 1, busy = false;
 
 // ---------- pengaturan ----------
 const factor = () => 1 / restore;
@@ -174,7 +179,7 @@ function baseOf(name) { return (name.replace(/\.[^.]+$/, '') || 'audio').replace
 function addFiles(fileList) {
   const files = [...fileList].filter(f => f.type.startsWith('audio/') || /\.(mp3|ogg|wav|m4a|flac|aac|opus|webm)$/i.test(f.name));
   for (const f of files) {
-    const r = { id: nextId++, file: f, name: baseOf(f.name), state: 'wait', msg: 'Menunggu diproses', blob: null, upBlob: null, ext: null, url: null, restore: null, assetId: null, err: false };
+    const r = { id: nextId++, file: f, name: baseOf(f.name), state: 'wait', msg: 'Menunggu diproses', blob: null, upBlob: null, ext: null, url: null, restore: null, assetId: null, mod: null, upName: null, err: false };
     rows.push(r); makeRow(r);
   }
   if (fileList.length && !files.length) $('status').textContent = 'Tidak ada file audio yang valid.';
@@ -196,6 +201,7 @@ function makeRow(r) {
       <button class="sm tr hidden">Tes restore</button>
       <a class="dl hidden"><button class="sm" type="button">Unduh</button></a>
       <button class="sm up hidden">Upload ke Roblox</button>
+      <button class="sm ck hidden">Cek moderasi</button>
       <button class="sm cp hidden">Salin ID</button>
     </div>`;
   r.el = el;
@@ -205,6 +211,7 @@ function makeRow(r) {
   q('.rm').onclick = () => { if (busy) return; if (r.url) URL.revokeObjectURL(r.url); rows = rows.filter(x => x !== r); el.remove(); syncUI(); updateLua(); };
   q('.tr').onclick = () => { const p = q('.pl'); p.preservesPitch = false; p.mozPreservesPitch = false; p.webkitPreservesPitch = false; p.playbackRate = r.restore; p.currentTime = 0; p.play(); };
   q('.up').onclick = async () => { if (busy) return; setBusy(true); try { await uploadRow(r); } finally { setBusy(false); } };
+  q('.ck').onclick = async () => { if (busy) return; setBusy(true); try { await checkModeration(r); } finally { setBusy(false); } };
   q('.cp').onclick = () => copyText(r.assetId, q('.cp'));
   $('list').appendChild(el);
   paintRow(r);
@@ -214,13 +221,14 @@ function paintRow(r) {
   const q = s => r.el.querySelector(s);
   const meta = q('.meta');
   meta.textContent = r.msg + (r.assetId ? ` • ID: ${r.assetId}` : '');
-  meta.className = 'meta' + (r.err ? ' err' : (r.assetId ? ' ok' : ''));
+  meta.className = 'meta' + (r.err ? ' err' : (r.assetId && r.mod === 'approved' ? ' ok' : ''));
   const done = !!r.blob;
   q('.pl').classList.toggle('hidden', !done);
   q('.tr').classList.toggle('hidden', !done);
   q('.dl').classList.toggle('hidden', !done);
   q('.up').classList.toggle('hidden', !done || !!r.assetId);
   q('.cp').classList.toggle('hidden', !r.assetId);
+  q('.ck').classList.toggle('hidden', !r.assetId || r.mod === 'approved');
   if (done && r.url && q('.pl').getAttribute('src') !== r.url) {
     q('.pl').src = r.url;
     q('.dl').href = r.url;
@@ -235,6 +243,7 @@ function syncUI() {
   $('fileInfo').textContent = n ? `${n} file di antrian.` : 'Belum ada file.';
   $('go').disabled = busy || !rows.some(r => r.state === 'wait' || r.state === 'error');
   $('uploadAll').disabled = busy || !rows.some(r => r.blob && !r.assetId);
+  $('checkAll').disabled = busy || !rows.some(r => r.assetId && r.mod !== 'approved');
   $('clearAll').disabled = busy || !n;
 }
 $('clearAll').onclick = () => { rows.forEach(r => r.url && URL.revokeObjectURL(r.url)); rows = []; $('list').innerHTML = ''; $('status').textContent = ''; syncUI(); updateLua(); };
@@ -282,7 +291,7 @@ async function processRow(r) {
     const up = await encodeForUpload(rendered, type, best);
 
     if (r.url) URL.revokeObjectURL(r.url);
-    r.blob = best; r.upBlob = up; r.ext = type; r.restore = rs; r.assetId = null;
+    r.blob = best; r.upBlob = up; r.ext = type; r.restore = rs; r.assetId = null; r.mod = null;
     r.url = URL.createObjectURL(best);
     r.state = 'done';
     r.msg = `Selesai: ${rendered.duration.toFixed(1)} dtk (asli ${buf.duration.toFixed(1)} dtk), ${(best.size / 1048576).toFixed(2)} MB`
@@ -299,12 +308,16 @@ $('go').onclick = async () => {
   const todo = rows.filter(r => r.state === 'wait' || r.state === 'error');
   if (!todo.length) return;
   setBusy(true);
+  if ($('autoUp').checked && /^\d+$/.test($('rbId').value.trim())) {
+    $('status').textContent = 'Memvalidasi Creator ID...';
+    await validateCreator();
+  }
   let i = 0;
   for (const r of todo) {
     i++; $('status').textContent = `Memproses ${i}/${todo.length}...`;
     await processRow(r);
     if ($('autoUp').checked && r.blob && r.upBlob) {
-      if (!credsOk()) { r.msg += ' • isi API key & Creator ID untuk auto-upload'; paintRow(r); }
+      if (!credsOk()) { r.msg += ' • ' + credsProblem() + ' (untuk auto-upload)'; paintRow(r); }
       else await uploadRow(r);
     }
   }
@@ -328,33 +341,109 @@ function credsOk() { return !credsProblem(); }
 async function apiJson(r) {
   let d = {};
   try { d = await r.json(); } catch {}
-  if (!r.ok) throw new Error(d.error || `Backend error (HTTP ${r.status}).`);
+  if (!r.ok) { const e = new Error(d.error || `Backend error (HTTP ${r.status}).`); e.status = r.status; throw e; }
   return d;
 }
 
+// Nama upload di Roblox diacak (tidak membocorkan judul lagu di daftar asset).
+// Judul asli tetap dipakai untuk SongName di hasil Lua.
+function randomName() {
+  const abc = 'abcdefghijklmnopqrstuvwxyz0123456789';
+  const bytes = crypto.getRandomValues(new Uint8Array(10));
+  return 'aud_' + [...bytes].map(b => abc[b % abc.length]).join('');
+}
+
+// ---------- validasi Creator (nama Group / User) ----------
+let creatorCache = null; // { type, id, name }
+function setCreatorInfo(text, cls) {
+  const el = $('creatorInfo'); el.textContent = text; el.style.color = cls === 'ok' ? 'var(--ok)' : cls === 'err' ? 'var(--err)' : '';
+}
+// Mengembalikan true jika ID terverifikasi ada; false jika jelas tidak ditemukan;
+// null jika pengecekan gagal karena sebab lain (jaringan/rate limit) -> tidak memblokir upload.
+async function validateCreator() {
+  const type = $('rbType').value, id = $('rbId').value.trim();
+  const label = type === 'group' ? 'Group' : 'User';
+  if (!/^\d+$/.test(id)) { creatorCache = null; setCreatorInfo(`Isi ${label} ID (angka) dulu.`, 'err'); return false; }
+  if (creatorCache && creatorCache.type === type && creatorCache.id === id) { setCreatorInfo(`${label}: ${creatorCache.name}`, 'ok'); return true; }
+  setCreatorInfo('Memvalidasi...', '');
+  try {
+    const d = await apiJson(await fetch(`${API}?${new URLSearchParams({ validate: '1', creatorType: type, creatorId: id })}`, { cache: 'no-store' }));
+    creatorCache = { type, id, name: d.name + (d.displayName && d.displayName !== d.name ? ` (${d.displayName})` : '') };
+    setCreatorInfo(`${label}: ${creatorCache.name} (ID ${id})`, 'ok');
+    return true;
+  } catch (e) {
+    creatorCache = null;
+    if (e.status === 404) { setCreatorInfo(e.message, 'err'); return false; }
+    setCreatorInfo(`${e.message} Upload tetap bisa dicoba.`, 'err');
+    return null;
+  }
+}
+$('validateBtn').onclick = validateCreator;
+['rbType', 'rbId'].forEach(id => $(id).addEventListener('change', () => { creatorCache = null; setCreatorInfo('', ''); }));
+$('rbId').addEventListener('input', () => { creatorCache = null; setCreatorInfo('', ''); });
+
+// ---------- moderasi ----------
+const MOD_TEXT = {
+  approved: 'Approved (aman dipakai)',
+  reviewing: 'masih direview Roblox (belum bisa diputar di Studio sampai Approved)',
+  rejected: 'DITOLAK moderasi Roblox (audio tidak bisa dipakai)',
+  unknown: 'status moderasi belum diketahui',
+};
+function applyModeration(r, mod) {
+  r.mod = mod || 'unknown';
+  r.err = r.mod === 'rejected';
+  r.msg = `Terupload ke Roblox • moderasi: ${MOD_TEXT[r.mod]}`;
+}
+async function checkModeration(r) {
+  if (!r.assetId) return;
+  const key = getKey();
+  if (key.length < 20) { r.err = true; r.msg = 'Isi API key dulu untuk cek moderasi.'; paintRow(r); return; }
+  r.err = false; r.msg = 'Mengecek status moderasi...'; paintRow(r);
+  try {
+    const d = await apiJson(await fetch(`${API}?asset=${encodeURIComponent(r.assetId)}`, { headers: { 'x-roblox-key': key }, cache: 'no-store' }));
+    applyModeration(r, d.moderation);
+  } catch (e) { r.err = true; r.msg = 'Cek moderasi gagal: ' + e.message; }
+  paintRow(r); syncUI(); updateLua();
+}
+
 async function uploadRow(r) {
-  if (!credsOk()) { r.err = true; r.msg = credsProblem(); paintRow(r); return; }
+  const problem = credsProblem();
+  if (problem) { r.err = true; r.msg = problem; paintRow(r); return; }
   if (!r.upBlob) { r.err = true; r.msg = 'File terlalu besar untuk diupload lewat Vercel (>4.3 MB).'; paintRow(r); return; }
+  const v = await validateCreator();
+  if (v === false) { r.err = true; r.msg = 'Upload dibatalkan: Creator ID tidak valid (lihat info di bagian Upload).'; paintRow(r); return; }
   const key = getKey();
   r.err = false; r.msg = 'Mengunggah ke Roblox...'; paintRow(r);
   try {
+    r.upName = randomName();
     const qs = new URLSearchParams({
-      name: (r.name || 'audio').slice(0, 50), ext: r.ext,
+      name: r.upName, ext: r.ext,
       creatorType: $('rbType').value, creatorId: $('rbId').value.trim(),
     });
     const first = await apiJson(await fetch(`${API}?${qs}`, {
       method: 'POST', headers: { 'x-roblox-key': key, 'Content-Type': r.upBlob.type || 'application/octet-stream' }, body: r.upBlob,
     }));
-    let assetId = first.assetId || null;
+    let assetId = first.assetId || null, mod = first.moderation || null;
     const t0 = Date.now();
     while (!assetId) {
       if (Date.now() - t0 > 120000) throw new Error('Waktu tunggu Roblox habis. Cek di Creator Dashboard.');
       r.msg = `Roblox sedang memproses (${Math.round((Date.now() - t0) / 1000)} dtk)...`; paintRow(r);
       await sleep(2000);
       const s = await apiJson(await fetch(`${API}?operation=${encodeURIComponent(first.operationId)}`, { headers: { 'x-roblox-key': key }, cache: 'no-store' }));
-      if (s.done) assetId = s.assetId;
+      if (s.done) { assetId = s.assetId; mod = s.moderation || null; }
     }
-    r.assetId = assetId; r.msg = 'Terupload ke Roblox';
+    r.assetId = assetId;
+    // Tunggu hasil moderasi sebentar (maks ~40 dtk); kalau masih review, user bisa cek lagi nanti.
+    const t1 = Date.now();
+    while (mod !== 'approved' && mod !== 'rejected' && Date.now() - t1 < 40000) {
+      r.mod = mod || 'reviewing'; r.msg = `Terupload (ID ${assetId}), menunggu moderasi Roblox (${Math.round((Date.now() - t1) / 1000)} dtk)...`; paintRow(r);
+      await sleep(4000);
+      try {
+        const d = await apiJson(await fetch(`${API}?asset=${encodeURIComponent(assetId)}`, { headers: { 'x-roblox-key': key }, cache: 'no-store' }));
+        mod = d.moderation;
+      } catch { break; }
+    }
+    applyModeration(r, mod);
   } catch (e) {
     r.err = true; r.msg = 'Upload gagal: ' + e.message;
   }
@@ -365,9 +454,22 @@ $('uploadAll').onclick = async () => {
   const todo = rows.filter(r => r.blob && !r.assetId);
   if (!todo.length) return;
   setBusy(true);
+  const v = await validateCreator();
+  if (v === false) { $('status').textContent = 'Upload dibatalkan: Creator ID tidak valid.'; setBusy(false); return; }
   let i = 0;
   for (const r of todo) { i++; $('status').textContent = `Upload ${i}/${todo.length}...`; await uploadRow(r); }
-  $('status').textContent = `Selesai upload (${rows.filter(r => r.assetId).length}/${rows.length} berhasil).`;
+  const ok = rows.filter(r => r.assetId).length, appr = rows.filter(r => r.mod === 'approved').length;
+  $('status').textContent = `Selesai upload (${ok}/${rows.length} berhasil, ${appr} sudah Approved).`;
+  setBusy(false);
+};
+
+$('checkAll').onclick = async () => {
+  const todo = rows.filter(r => r.assetId && r.mod !== 'approved');
+  if (!todo.length) return;
+  setBusy(true);
+  let i = 0;
+  for (const r of todo) { i++; $('status').textContent = `Cek moderasi ${i}/${todo.length}...`; await checkModeration(r); }
+  $('status').textContent = `Cek moderasi selesai (${rows.filter(r => r.mod === 'approved').length}/${rows.filter(r => r.assetId).length} Approved).`;
   setBusy(false);
 };
 
@@ -387,10 +489,14 @@ function luaFor(r, imageId) {
 
 function updateLua() {
   const imageId = ($('imageId').value.trim().replace(/\D/g, '')) || '93672832601289';
-  const done = rows.filter(r => r.assetId);
+  const done = rows.filter(r => r.assetId && r.mod !== 'rejected');
+  const wait = done.filter(r => r.mod !== 'approved').length;
+  const bad = rows.filter(r => r.mod === 'rejected').length;
   $('lua').value = done.map(r => luaFor(r, imageId)).join('\n');
   $('copyLua').disabled = !done.length;
-  $('luaInfo').textContent = done.length ? `${done.length} lagu siap disalin.` : '';
+  $('luaInfo').textContent = done.length
+    ? `${done.length} lagu siap disalin.` + (wait ? ` ${wait} belum Approved (belum bisa diputar sampai lolos moderasi).` : '') + (bad ? ` ${bad} ditolak dan tidak dimasukkan.` : '')
+    : (bad ? `${bad} audio ditolak moderasi Roblox dan tidak dimasukkan.` : '');
 }
 $('imageId').addEventListener('input', updateLua);
 

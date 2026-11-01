@@ -14,6 +14,14 @@ dan TIDAK disimpan / di-log di server.
        header: x-roblox-key
        -> {"done": false}  atau  {"done": true, "assetId": "..."}
 
+  GET  /api/roblox_upload?asset=<assetId>
+       header: x-roblox-key
+       -> {"assetId": "...", "moderation": "approved|reviewing|rejected|unknown"}
+
+  GET  /api/roblox_upload?validate=1&creatorType=user|group&creatorId=
+       (tanpa key; pakai API publik Roblox)
+       -> {"ok": true, "type": "group", "id": "...", "name": "Nama Group"}
+
   GET  /api/roblox_upload  -> cek status endpoint
 """
 import json
@@ -97,6 +105,43 @@ def extract_result(data: dict) -> dict:
         if not asset_id:
             raise ApiError("Operasi selesai tetapi Roblox tidak mengembalikan assetId.", 502)
         out["assetId"] = asset_id
+        out["moderation"] = norm_moderation(data)
+    return out
+
+
+def norm_moderation(data: dict) -> str:
+    """Ambil moderationState dari objek asset/operation -> approved | reviewing | rejected | unknown."""
+    resp = data.get("response") if isinstance(data.get("response"), dict) else data
+    mr = (resp or {}).get("moderationResult") or {}
+    state = str(mr.get("moderationState") or "").upper().replace("MODERATION_STATE_", "")
+    return {"APPROVED": "approved", "REVIEWING": "reviewing", "REJECTED": "rejected"}.get(state, "unknown")
+
+
+def lookup_creator(creator_type: str, creator_id: str) -> dict:
+    """Validasi ID & ambil nama lewat API publik Roblox (tanpa API key)."""
+    if creator_type == "group":
+        url = f"https://groups.roblox.com/v1/groups/{creator_id}"
+    else:
+        url = f"https://users.roblox.com/v1/users/{creator_id}"
+    req = Request(url, headers={"Accept": "application/json", "User-Agent": "audio-speedup/3.0 (+vercel)"})
+    label = "Group" if creator_type == "group" else "User"
+    try:
+        with urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8", errors="replace") or "{}")
+    except HTTPError as e:
+        if e.code in (400, 404):
+            raise ApiError(f"{label} ID {creator_id} tidak ditemukan di Roblox.", 404)
+        if e.code == 429:
+            raise ApiError("Roblox membatasi pengecekan sementara (rate limit). Coba lagi sebentar.", 429)
+        raise ApiError(f"Tidak bisa memverifikasi {label} ID (HTTP {e.code}).", 502)
+    except (URLError, TimeoutError, ValueError):
+        raise ApiError(f"Tidak bisa memverifikasi {label} ID (Roblox tidak merespons).", 504)
+    name = str(data.get("name") or "").strip()
+    if not name:
+        raise ApiError(f"{label} ID {creator_id} tidak ditemukan di Roblox.", 404)
+    out = {"ok": True, "type": creator_type, "id": creator_id, "name": name}
+    if creator_type == "user" and data.get("displayName"):
+        out["displayName"] = str(data["displayName"])
     return out
 
 
@@ -131,10 +176,34 @@ class handler(BaseHTTPRequestHandler):
             if not self._same_origin():
                 return self._json(403, {"error": "Akses ditolak."})
 
+            # --- validasi Creator ID (tanpa key): tampilkan nama group/user ---
+            if query.get("validate"):
+                ctype = query.get("creatorType", [""])[0].lower()
+                cid = query.get("creatorId", [""])[0]
+                if ctype not in ("user", "group") or not ID_RE.match(cid):
+                    return self._json(400, {"error": "Creator ID harus angka dan tipe harus user/group."})
+                return self._json(200, lookup_creator(ctype, cid))
+
+            key = clean_key(self.headers.get("x-roblox-key", ""))
+
+            # --- cek status moderasi asset ---
+            asset = query.get("asset", [""])[0]
+            if asset:
+                if not ID_RE.match(asset):
+                    return self._json(400, {"error": "Asset ID tidak valid."})
+                try:
+                    data = roblox_call(Request(f"{ROBLOX}/assets/{asset}?readMask=moderationResult",
+                                               headers={"x-api-key": key}), 25)
+                except ApiError as e:
+                    if e.status in (401, 403, 429):
+                        raise
+                    data = roblox_call(Request(f"{ROBLOX}/assets/{asset}", headers={"x-api-key": key}), 25)
+                return self._json(200, {"assetId": asset, "moderation": norm_moderation(data)})
+
+            # --- status operasi upload ---
             op = query.get("operation", [""])[0]
             if not OP_ID_RE.match(op):
                 return self._json(400, {"error": "Operation ID tidak valid."})
-            key = clean_key(self.headers.get("x-roblox-key", ""))
 
             data = roblox_call(Request(f"{ROBLOX}/operations/{op}", headers={"x-api-key": key}), 25)
             self._json(200, extract_result(data))

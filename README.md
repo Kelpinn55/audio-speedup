@@ -6,8 +6,10 @@ Web app untuk mempercepat banyak audio sekaligus (nada ikut naik), meng-upload h
 
 - Pilih/seret **banyak file audio lokal** sekaligus (bulk). Judul lagu bisa diedit per file.
 - Restore speed preset `0.43`, `0.44`, atau custom.
-- Ekspor **MP3 (320 kbps)** atau **OGG (Vorbis q10)** di browser (WebAssembly).
-- **Upload ke Roblox** lewat Open Cloud Assets API dan tampilkan Asset ID.
+- Ekspor **OGG (Vorbis q10, default)** atau **MP3 (320 kbps)** di browser (WebAssembly).
+- **Upload ke Roblox** lewat Open Cloud Assets API dan tampilkan Asset ID. Nama asset di Roblox diacak; `SongName` di hasil Lua tetap memakai judul default/yang kamu edit.
+- **Validasi Creator ID**: menampilkan nama Group/User sebelum upload.
+- **Cek moderasi**: status Approved/Reviewing/Rejected ditampilkan per file. Audio yang belum Approved tidak bisa diputar di Studio ("Asset is not approved for the requester"); audio milik Group hanya bisa dipakai di game milik Group yang sama.
 - Hasil siap salin:
 
 ```lua
@@ -32,7 +34,7 @@ Browser tidak bisa memanggil `apis.roblox.com` langsung (CORS), jadi file dikiri
 1. Buka https://create.roblox.com/dashboard/credentials → **Create API Key**.
 2. Tambahkan API **Assets** dengan izin **Read** dan **Write**.
 3. Pada **Accepted IP Addresses**, isi `0.0.0.0/0` (IP Vercel tidak tetap).
-4. Salin key (hanya muncul sekali). Pemilik key harus sama dengan Creator ID. Untuk grup, pilih Group sebagai pemilik key dan pakai Group ID.
+4. Salin key (hanya muncul sekali; key Roblox bisa sangat panjang, itu normal). Pemilik key harus sama dengan Creator ID. Untuk grup: pilih **Group** sebagai pemilik key, pilih "Upload sebagai: Group" di halaman, isi **Group ID**, dan pastikan akun kamu punya izin upload/kelola asset di grup tersebut.
 
 ## Deploy
 
