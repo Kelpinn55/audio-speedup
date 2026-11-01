@@ -63,16 +63,22 @@ def apify_json(method: str, path: str, body: dict | None = None, timeout: int = 
         with urlopen(req, timeout=timeout) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except HTTPError as e:
+        # Ambil tipe & pesan error asli dari Apify supaya penyebabnya jelas.
+        err_type, err_msg = "", ""
+        try:
+            err = json.loads(e.read().decode("utf-8")).get("error", {})
+            err_type, err_msg = str(err.get("type", "")), str(err.get("message", ""))
+        except Exception:
+            pass
+        detail = f" [{e.code} {err_type}] {err_msg}".rstrip()
+        print("apify http error:", e.code, err_type, err_msg[:300])
         if e.code == 401:
-            raise ApifyError("Token Apify tidak valid.", 502)
-        if e.code in (402, 403):
-            raise ApifyError("Saldo/limit Apify tidak cukup atau actor tidak bisa dipakai akun ini.", 502)
+            raise ApifyError("Token Apify tidak valid." + detail, 502)
         if e.code == 404:
-            raise ApifyError("Data Apify tidak ditemukan (run kedaluwarsa atau ID salah).", 404)
+            raise ApifyError("Data Apify tidak ditemukan (run kedaluwarsa atau ID salah)." + detail, 404)
         if e.code == 429:
-            raise ApifyError("Terlalu banyak permintaan ke Apify. Coba lagi sebentar.", 429)
-        print("apify http error:", e.code)
-        raise ApifyError("Apify mengembalikan error. Coba lagi.", 502)
+            raise ApifyError("Terlalu banyak permintaan ke Apify. Coba lagi sebentar." + detail, 429)
+        raise ApifyError("Apify menolak permintaan." + detail, 502)
     except (URLError, TimeoutError):
         raise ApifyError("Tidak bisa menghubungi Apify. Coba lagi.", 504)
 
