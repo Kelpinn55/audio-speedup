@@ -174,7 +174,7 @@ $('rbKey').addEventListener('input', saveSettings);
 $('rbId').addEventListener('input', saveSettings);
 
 // ---------- antrian file ----------
-function baseOf(name) { return (name.replace(/\.[^.]+$/, '') || 'audio').replace(/[_]+/g, ' ').replace(/\s+/g, ' ').trim(); }
+function baseOf(name) { return (name.replace(/\.[^.]+$/, '') || 'audio').trim(); }  // persis nama file, tanpa ekstensi
 
 function addFiles(fileList) {
   const files = [...fileList].filter(f => f.type.startsWith('audio/') || /\.(mp3|ogg|wav|m4a|flac|aac|opus|webm)$/i.test(f.name));
@@ -242,7 +242,7 @@ function syncUI() {
   const n = rows.length;
   $('fileInfo').textContent = n ? `${n} file di antrian.` : 'Belum ada file.';
   $('go').disabled = busy || !rows.some(r => r.state === 'wait' || r.state === 'error');
-  $('uploadAll').disabled = busy || !rows.some(r => r.blob && !r.assetId);
+  $('uploadAll').disabled = busy || !rows.some(r => r.blob && !r.assetId && r.mod !== 'rejected');
   $('checkAll').disabled = busy || !rows.some(r => r.assetId && r.mod !== 'approved');
   $('clearAll').disabled = busy || !n;
 }
@@ -345,12 +345,14 @@ async function apiJson(r) {
   return d;
 }
 
-// Nama upload di Roblox diacak (tidak membocorkan judul lagu di daftar asset).
-// Judul asli tetap dipakai untuk SongName di hasil Lua.
+// Nama asset di Roblox: "no copyright song <angka acak>" (tanpa judul asli).
+// Judul asli (nama file) tetap dipakai untuk SongName di hasil Lua.
+const usedNums = new Set();
 function randomName() {
-  const abc = 'abcdefghijklmnopqrstuvwxyz0123456789';
-  const bytes = crypto.getRandomValues(new Uint8Array(10));
-  return 'aud_' + [...bytes].map(b => abc[b % abc.length]).join('');
+  let n;
+  do { n = 1 + (crypto.getRandomValues(new Uint32Array(1))[0] % 99999); } while (usedNums.has(n));
+  usedNums.add(n);
+  return `no copyright song ${n}`;
 }
 
 // ---------- validasi Creator (nama Group / User) ----------
@@ -393,6 +395,12 @@ function applyModeration(r, mod) {
   r.mod = mod || 'unknown';
   r.err = r.mod === 'rejected';
   r.msg = `Terupload ke Roblox • moderasi: ${MOD_TEXT[r.mod]}`;
+  if (r.mod === 'rejected') {
+    // Detail untuk dibandingkan dengan upload manual yang berhasil.
+    r.msg += ` • ID ${r.assetId} • nama di Roblox: "${r.upName}" • ${r.ext.toUpperCase()} ${((r.upBlob || r.blob).size / 1048576).toFixed(2)} MB`
+      + ` • owner: ${$('rbType').value === 'group' ? 'Group' : 'User'} ${$('rbId').value.trim()}`;
+    r.assetId = null;   // tombol "Upload ke Roblox" muncul lagi untuk coba ulang (satu per satu, hemat kuota bulanan)
+  }
 }
 async function checkModeration(r) {
   if (!r.assetId) return;
@@ -413,7 +421,7 @@ async function uploadRow(r) {
   const v = await validateCreator();
   if (v === false) { r.err = true; r.msg = 'Upload dibatalkan: Creator ID tidak valid (lihat info di bagian Upload).'; paintRow(r); return; }
   const key = getKey();
-  r.err = false; r.msg = 'Mengunggah ke Roblox...'; paintRow(r);
+  r.mod = null; r.err = false; r.msg = 'Mengunggah ke Roblox...'; paintRow(r);
   try {
     r.upName = randomName();
     const qs = new URLSearchParams({
@@ -451,7 +459,7 @@ async function uploadRow(r) {
 }
 
 $('uploadAll').onclick = async () => {
-  const todo = rows.filter(r => r.blob && !r.assetId);
+  const todo = rows.filter(r => r.blob && !r.assetId && r.mod !== 'rejected');
   if (!todo.length) return;
   setBusy(true);
   const v = await validateCreator();
