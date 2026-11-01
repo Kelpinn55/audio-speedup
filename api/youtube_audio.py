@@ -38,7 +38,7 @@ class handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self._json(200, {
             "ok": True,
-            "service": "youtube-audio",
+            "service": "youtube_audio",
             "limits": {
                 "max_audio_mb": 4,
                 "max_duration_seconds": MAX_DURATION_SECONDS

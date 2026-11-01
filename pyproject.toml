@@ -7,4 +7,4 @@ dependencies = [
 ]
 
 [tool.vercel]
-entrypoint = "api.youtube-audio:handler"
+entrypoint = "api.youtube_audio:handler"

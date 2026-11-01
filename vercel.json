@@ -1,7 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "functions": {
-    "api/youtube-audio.py": {
+    "api/youtube_audio.py": {
       "maxDuration": 60
     }
   }

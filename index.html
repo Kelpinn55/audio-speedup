@@ -135,7 +135,7 @@ $('loadYoutube').onclick = async () => {
   $('loadYoutube').disabled = true;
   $('status').textContent = 'Mengambil audio dari YouTube melalui backend...';
   try {
-    const r = await fetch('/api/youtube-audio', {
+    const r = await fetch('/api/youtube_audio', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({url: u})

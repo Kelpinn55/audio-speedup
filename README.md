@@ -52,14 +52,14 @@ git push -u origin main
 7. Output Directory: kosongkan.
 8. Klik **Deploy**.
 
-Vercel akan menyajikan `index.html` sebagai static page dan mendeteksi `api/youtube-audio.py` sebagai Python Function.
+Vercel akan menyajikan `index.html` sebagai static page dan mendeteksi `api/youtube_audio.py` sebagai Python Function.
 
 ### 3. Tes endpoint
 
 Setelah deploy, buka:
 
 ```text
-https://NAMA-PROJECT.vercel.app/api/youtube-audio
+https://NAMA-PROJECT.vercel.app/api/youtube_audio
 ```
 
 Endpoint GET harus menampilkan JSON status dan batas penggunaan. Kembali ke halaman utama untuk menguji URL YouTube.
@@ -99,7 +99,7 @@ Buka URL lokal yang ditampilkan Vercel CLI.
 ```text
 .
 ├── api/
-│   └── youtube-audio.py
+│   └── youtube_audio.py
 ├── index.html
 ├── requirements.txt
 ├── vercel.json
